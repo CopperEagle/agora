@@ -34,37 +34,10 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_DB_PATH = "agora.db"
 
-_McpWrapper = Callable[[dict[str, object]], Awaitable[dict[str, object]]]
-
-
-def _make_mcp_wrapper(
-    router: RequestRouter, tool_name: str,
-) -> _McpWrapper:
-    """Create an explicit-parameter wrapper for a router tool.
-
-    FastMCP rejects functions with ``**kwargs``, so each tool needs a
-    wrapper with named parameters.  The wrapper delegates to
-    ``router.route()`` for dispatch and audit.
-
-    Args:
-        router: The RequestRouter containing the tool handler.
-
-        tool_name: The fully-qualified tool name.
-
-    Returns:
-        An async callable suitable for ``Tool.from_function``.
-
-    """
-
-    async def _wrapper(arguments: dict[str, object]) -> dict[str, object]:
-        return await router.route(tool_name, arguments, session_id=None)
-
-    return _wrapper
-
 
 def _make_typed_wrapper(
     router: RequestRouter, tool_name: str, handler: ToolHandler,
-) -> _McpWrapper:
+) -> Callable[[dict[str, object]], Awaitable[dict[str, object]]]:
     """Create a typed wrapper for MCP schema generation.
 
     Wraps the actual handler with a function that preserves the handler's
@@ -303,9 +276,9 @@ class AgoraServer:
     def _register_tools_with_mcp(self) -> None:
         """Register all router tools as FastMCP tools.
 
-        Creates explicit-parameter wrappers for each tool since FastMCP
-        rejects functions with ``**kwargs``.  Each wrapper delegates to
-        ``router.route()`` for dispatch and audit.
+        Uses ``_make_typed_wrapper`` to wrap each handler with its original
+        type annotations so FastMCP generates correct ``inputSchema`` from
+        the handler's typed parameters.
         """
         assert self._mcp is not None
         assert self._router is not None
@@ -314,7 +287,8 @@ class AgoraServer:
         desc_map = {m["name"]: m["description"] for m in meta_list}
 
         for tool_name in self._router.list_tools():
-            wrapper = _make_mcp_wrapper(self._router, tool_name)
+            handler = self._router._tools[tool_name]  # noqa: SLF001
+            wrapper = _make_typed_wrapper(self._router, tool_name, handler)
             desc = desc_map.get(tool_name, "")
             mcp_tool = Tool.from_function(wrapper, name=tool_name, description=desc)
             self._mcp.add_tool(mcp_tool)
