@@ -241,16 +241,19 @@ class AgoraServer:
             args: Keyword arguments to forward to the handler.
 
         Returns:
-            The handler's result dict.
-
-        Raises:
-            KeyError: If no tool with *tool_name* is registered.
+            The handler's result dict, or a structured error dict with keys
+            ``error``, ``message``, ``details``, and ``fix``.
 
         """
         assert self._router is not None, "Server not started"
         if tool_name not in self._router.list_tools():
-            msg = f"TOOL_NOT_FOUND: {tool_name}"
-            raise KeyError(msg)
+            available = ", ".join(self._router.list_tools())
+            return {
+                "error": "TOOL_NOT_FOUND",
+                "message": f"Unknown tool '{tool_name}'",
+                "details": {"tool": tool_name},
+                "fix": f"Check tool name. Available: {available}",
+            }
         handler = self._router._tools[tool_name]  # noqa: SLF001
         try:
             return await handler(**args)
@@ -259,6 +262,7 @@ class AgoraServer:
                 "error": "VALIDATION_ERROR",
                 "message": str(exc),
                 "details": {},
+                "fix": f"Fix the parameter types and retry: {exc}",
             }
 
     def _register_backbone_tools(self) -> None:

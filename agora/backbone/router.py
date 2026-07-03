@@ -114,24 +114,29 @@ class RequestRouter:
             session_id: Caller session identifier (may be ``None``).
 
         Returns:
-            The handler's result dict.
-
-        Raises:
-            PermissionError: If the caller is not authenticated and the tool
-                is not ``"register"``.
-
-            KeyError: If no tool with *tool_name* is registered.
+            The handler's result dict, or a structured error dict with keys
+            ``error``, ``message``, ``details``, and ``fix``.
 
         """
         agent_id = await self.authenticate(session_id)
 
         if agent_id is None and tool_name != _REGISTER_TOOL:
-            msg = "NOT_AUTHORIZED"
-            raise PermissionError(msg)
+            return {
+                "error": "NOT_AUTHORIZED",
+                "message": f"Agent not registered for tool '{tool_name}'",
+                "details": {"tool": tool_name},
+                "fix": "Call register({name: '...'}) first to obtain an agent_id, "
+                "then include it as _agent_id in subsequent calls.",
+            }
 
         if tool_name not in self._tools:
-            msg = "TOOL_NOT_FOUND"
-            raise KeyError(msg)
+            available = ", ".join(sorted(self._tools))
+            return {
+                "error": "TOOL_NOT_FOUND",
+                "message": f"Unknown tool '{tool_name}'",
+                "details": {"tool": tool_name},
+                "fix": f"Check tool name. Available: {available}",
+            }
 
         handler = self._tools[tool_name]
 

@@ -105,18 +105,22 @@ async def test_route_registered_agent(router: RequestRouter, registry: AgentRegi
 
 async def test_route_unregistered_agent_rejected(router: RequestRouter) -> None:
     """Given an unregistered session, When routing a non-register tool,
-    Then PermissionError is raised."""
+    Then a structured NOT_AUTHORIZED error dict is returned."""
     router.register_tool("echo", _ok_handler)
-    with pytest.raises(PermissionError, match="NOT_AUTHORIZED"):
-        await router.route("echo", {}, "unknown-session")
+    result = await router.route("echo", {}, "unknown-session")
+    assert result["error"] == "NOT_AUTHORIZED"
+    assert "fix" in result
+    assert "register" in result["fix"].lower()
 
 
 async def test_route_unknown_tool(router: RequestRouter, registry: AgentRegistry) -> None:
     """Given a registered agent, When routing an unknown tool name,
-    Then KeyError is raised."""
+    Then a structured TOOL_NOT_FOUND error dict is returned."""
     agent_id = await registry.register(name="bob")
-    with pytest.raises(KeyError, match="TOOL_NOT_FOUND"):
-        await router.route("nonexistent_tool", {}, agent_id)
+    result = await router.route("nonexistent_tool", {}, agent_id)
+    assert result["error"] == "TOOL_NOT_FOUND"
+    assert "fix" in result
+    assert "check tool name" in result["fix"].lower()
 
 
 async def test_route_register_always_allowed(router: RequestRouter) -> None:

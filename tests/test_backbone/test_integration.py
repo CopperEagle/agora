@@ -218,9 +218,10 @@ async def test_plugin_lifecycle(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 async def test_error_handling(empty_server: AgoraServer) -> None:
-    """Unknown tool → KeyError, empty list, unknown agent → None."""
-    with pytest.raises(KeyError, match="TOOL_NOT_FOUND"):
-        await empty_server.call_tool("nonexistent_tool", {})
+    """Unknown tool → structured error dict, empty list, unknown agent → None."""
+    result = await empty_server.call_tool("nonexistent_tool", {})
+    assert result["error"] == "TOOL_NOT_FOUND"
+    assert "fix" in result
 
     agents = await empty_server.call_tool("list_agents", {})
     assert agents["agents"] == []

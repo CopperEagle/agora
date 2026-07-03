@@ -183,11 +183,13 @@ async def test_server_has_eventbus(server: AgoraServer) -> None:
     assert isinstance(server.eventbus, EventBus)
 
 
-async def test_call_tool_unknown_raises_keyerror(server: AgoraServer) -> None:
+async def test_call_tool_unknown_returns_error_dict(server: AgoraServer) -> None:
     """Given a running server, When calling an unknown tool,
-    Then KeyError is raised."""
-    with pytest.raises(KeyError, match="TOOL_NOT_FOUND"):
-        await server.call_tool("nonexistent_tool", {})
+    Then a structured TOOL_NOT_FOUND error dict is returned."""
+    result = await server.call_tool("nonexistent_tool", {})
+    assert result["error"] == "TOOL_NOT_FOUND"
+    assert "fix" in result
+    assert "check tool name" in result["fix"].lower()
 
 
 async def test_call_tool_register_with_capabilities(server: AgoraServer) -> None:

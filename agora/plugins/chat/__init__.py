@@ -228,6 +228,7 @@ class ChatPlugin(AgoraPlugin):
                 "error": "VALIDATION_ERROR",
                 "message": "Channel name must not be empty",
                 "details": {},
+                "fix": "Provide a non-empty channel name (e.g. '#general').",
             }
 
         if not content:
@@ -235,6 +236,7 @@ class ChatPlugin(AgoraPlugin):
                 "error": "VALIDATION_ERROR",
                 "message": "Message content must not be empty",
                 "details": {},
+                "fix": "Provide non-empty message content.",
             }
 
         if len(content) > self.max_message_length:
@@ -242,6 +244,7 @@ class ChatPlugin(AgoraPlugin):
                 "error": "VALIDATION_ERROR",
                 "message": f"Message content exceeds {self.max_message_length} characters",
                 "details": {"max_length": self.max_message_length},
+                "fix": f"Reduce message length to {self.max_message_length} characters or fewer.",
             }
 
         # Ensure channel exists (auto-vivify)
@@ -251,6 +254,7 @@ class ChatPlugin(AgoraPlugin):
                 "error": "CHANNEL_LIMIT",
                 "message": f"Maximum of {self.max_channels} channels reached",
                 "details": {"max_channels": self.max_channels},
+                "fix": "Reduce the number of channels or increase max_channels config.",
             }
 
         # Generate message ID and timestamp
@@ -308,6 +312,7 @@ class ChatPlugin(AgoraPlugin):
                 "error": "VALIDATION_ERROR",
                 "message": f"Limit must be between 0 and {max_limit}",
                 "details": {"limit": limit},
+                "fix": "Set limit between 0 and 1000.",
             }
         order_lower = order.lower()
 
@@ -316,6 +321,7 @@ class ChatPlugin(AgoraPlugin):
                 "error": "VALIDATION_ERROR",
                 "message": "Order must be 'asc' or 'desc'",
                 "details": {"order": order},
+                "fix": "Use 'asc' or 'desc'.",
             }
 
         if not channel_name:
@@ -323,6 +329,7 @@ class ChatPlugin(AgoraPlugin):
                 "error": "VALIDATION_ERROR",
                 "message": "Channel name must not be empty",
                 "details": {},
+                "fix": "Provide a non-empty channel name (e.g. '#general').",
             }
 
         assert self.database is not None
@@ -450,6 +457,7 @@ class ChatPlugin(AgoraPlugin):
                 "error": "VALIDATION_ERROR",
                 "message": "Channel name must not be empty",
                 "details": {},
+                "fix": "Provide a non-empty channel name (e.g. '#general').",
             }
 
         assert self.database is not None
@@ -464,6 +472,7 @@ class ChatPlugin(AgoraPlugin):
                 "error": "CHANNEL_NOT_FOUND",
                 "message": f"No channel named '{channel_name}'",
                 "details": {},
+                "fix": "Create the channel first with chat_post_message.",
             }
 
         channel_id: str = str(chan_rows[0]["id"])
