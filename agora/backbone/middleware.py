@@ -15,6 +15,7 @@ Example::
 
 from __future__ import annotations
 
+import json
 import logging
 
 import mcp.types as mt
@@ -56,9 +57,12 @@ class AuthMiddleware(Middleware):
     ) -> ToolResult:
         """Intercept tool calls and enforce authentication.
 
-        Extracts the session_id from the FastMCP context and the tool
-        name from the request parameters.  If the caller is not
-        registered and the tool is not ``register``, raises ToolError.
+        Extracts ``_agent_id`` from the tool call arguments and
+        validates it against the registry.  This is transport-agnostic
+        — it works identically over stdio, SSE, and Streamable HTTP.
+
+        The ``register`` tool is always allowed without authentication.
+        All other tools require a valid ``_agent_id``.
 
         Args:
             context: The middleware context containing the tool call params.
@@ -73,30 +77,43 @@ class AuthMiddleware(Middleware):
                 is not ``register``.
 
         """
-        # Extract session_id from the FastMCP context.
-        fastmcp_ctx = context.fastmcp_context
-        session_id: str | None = None
-        if fastmcp_ctx is not None:
-            session_id = getattr(fastmcp_ctx, "session_id", None)
-
         # Extract tool name from request params.
         tool_name: str | None = getattr(context.message, "name", None)
 
-        # Authenticate via the RequestRouter.
-        agent_id = await self._router.authenticate(session_id)
+        # Extract _agent_id from tool call arguments (transport-agnostic).
+        # This works identically across stdio, SSE, and Streamable HTTP
+        # transports — no session_id dependency.
+        args = context.message.arguments or {}
+        raw_agent_id: str | None = args.get("_agent_id", None)
+        agent_id = str(raw_agent_id) if raw_agent_id is not None else None
+
+        # Validate agent_id exists in registry.
+        valid_agent_id: str | None = None
+        if agent_id is not None:
+            valid_agent_id = await self._router.authenticate(agent_id)
 
         # Reject if not authorized (unless it's the register tool).
-        if agent_id is None and tool_name not in (None, _REGISTER_TOOL):
-            msg = "NOT_AUTHORIZED"
-            raise ToolError(msg)
+        if valid_agent_id is None and tool_name not in (None, _REGISTER_TOOL):
+            available_tools = self._router.list_tools()
+            tool_list = ", ".join(available_tools[:15])
+            error_text = json.dumps(
+                {
+                    "error": "NOT_AUTHORIZED",
+                    "message": f"Missing or invalid _agent_id for tool '{tool_name}'.",
+                    "details": {"tool": tool_name, "available_tools": tool_list},
+                    "fix": (
+                        "Call register({name: '...'}) first to obtain an agent_id, "
+                        "then include it as _agent_id in subsequent calls."
+                    ),
+                },
+            )
+            raise ToolError(error_text)
 
         # Inject the authenticated agent_id into tool call arguments so
-        # the handler receives it as ``_agent_id``.  This is the only
-        # path where the real agent identity is available (call_tool
-        # bypasses the middleware entirely).
-        if agent_id is not None and tool_name not in (None, _REGISTER_TOOL):
-            args = context.message.arguments
-            if args is not None:
-                args["_agent_id"] = agent_id
+        # the handler receives it as _agent_id.
+        if valid_agent_id is not None and tool_name not in (None, _REGISTER_TOOL):
+            # Remove original _agent_id, add validated one.
+            args.pop("_agent_id", None)
+            args["_agent_id"] = valid_agent_id
 
         return await call_next(context)

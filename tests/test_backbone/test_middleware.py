@@ -84,12 +84,23 @@ async def _mock_call_next(
 
 def _make_context(
     tool_name: str = "test_tool",
-    session_id: str | None = None,
+    arguments: dict[str, object] | None = None,
 ) -> MiddlewareContext[mt.CallToolRequestParams]:
-    """Create a MiddlewareContext for testing on_call_tool."""
+    """Create a MiddlewareContext for testing on_call_tool.
+
+    Args:
+        tool_name: Name of the tool being called.
+
+        arguments: Tool call arguments (may include ``_agent_id``).
+
+    Returns:
+        A MiddlewareContext with a fake FastMCP context providing session_id.
+
+    """
+    args = arguments or {}
     return MiddlewareContext(
-        message=mt.CallToolRequestParams(name=tool_name),
-        fastmcp_context=_FakeContext(session_id=session_id) if session_id is not None else None,  # type: ignore[arg-type]
+        message=mt.CallToolRequestParams(name=tool_name, arguments=args),
+        fastmcp_context=_FakeContext(session_id="fake-stdio-session-id"),
         method="tools/call",
     )
 
@@ -114,11 +125,13 @@ async def test_auth_middleware_constructor(
     # Verify the middleware delegates auth to the correct router by
     # confirming a registered agent passes and an unregistered one is blocked.
     agent_id = await registry.register(name="probe")
-    ctx_allowed = _make_context(tool_name="echo", session_id=agent_id)
+    ctx_allowed = _make_context(tool_name="echo", arguments={"_agent_id": agent_id})
     result = await middleware.on_call_tool(ctx_allowed, _mock_call_next)
     assert isinstance(result, ToolResult)
 
-    ctx_rejected = _make_context(tool_name="echo", session_id="no-such")
+    ctx_rejected = _make_context(
+        tool_name="echo", arguments={"_agent_id": "no-such"},
+    )
     with pytest.raises(ToolError, match="NOT_AUTHORIZED"):
         await middleware.on_call_tool(ctx_rejected, _mock_call_next)
 
@@ -129,11 +142,11 @@ async def test_auth_middleware_constructor(
 async def test_registered_agent_allowed(
     middleware: AuthMiddleware, registry: AgentRegistry,
 ) -> None:
-    """Given a registered agent with valid session_id,
+    """Given a registered agent with valid _agent_id in arguments,
     When calling any tool through middleware,
     Then the call is allowed and passes through."""
     agent_id = await registry.register(name="alice")
-    ctx = _make_context(tool_name="echo", session_id=agent_id)
+    ctx = _make_context(tool_name="echo", arguments={"_agent_id": agent_id})
     result = await middleware.on_call_tool(ctx, _mock_call_next)
     assert isinstance(result, ToolResult)
 
@@ -142,19 +155,21 @@ async def test_registered_agent_allowed(
 
 
 async def test_unregistered_agent_rejected(middleware: AuthMiddleware) -> None:
-    """Given an unregistered session_id,
+    """Given an _agent_id that doesn't exist in the registry,
     When calling a non-register tool,
     Then ToolError is raised."""
-    ctx = _make_context(tool_name="echo", session_id="unknown-session")
+    ctx = _make_context(
+        tool_name="echo", arguments={"_agent_id": "unknown-agent-id"},
+    )
     with pytest.raises(ToolError, match="NOT_AUTHORIZED"):
         await middleware.on_call_tool(ctx, _mock_call_next)
 
 
-async def test_no_session_rejected(middleware: AuthMiddleware) -> None:
-    """Given no session context (fastmcp_context is None),
+async def test_no_agent_id_rejected(middleware: AuthMiddleware) -> None:
+    """Given no _agent_id in arguments,
     When calling a non-register tool,
     Then ToolError is raised."""
-    ctx = _make_context(tool_name="echo", session_id=None)
+    ctx = _make_context(tool_name="echo")
     with pytest.raises(ToolError, match="NOT_AUTHORIZED"):
         await middleware.on_call_tool(ctx, _mock_call_next)
 
@@ -166,7 +181,7 @@ async def test_register_tool_always_allowed(middleware: AuthMiddleware) -> None:
     """Given the 'register' tool,
     When called without any authentication,
     Then the call is allowed through."""
-    ctx = _make_context(tool_name="register", session_id=None)
+    ctx = _make_context(tool_name="register")
     result = await middleware.on_call_tool(ctx, _mock_call_next)
     assert isinstance(result, ToolResult)
 
@@ -181,7 +196,9 @@ async def test_middleware_calls_call_next_on_success(
     When middleware auth passes,
     Then call_next is invoked and its result returned."""
     agent_id = await registry.register(name="bob")
-    ctx = _make_context(tool_name="chat_echo", session_id=agent_id)
+    ctx = _make_context(
+        tool_name="chat_echo", arguments={"_agent_id": agent_id},
+    )
 
     call_next_called = False
 
@@ -206,7 +223,9 @@ async def test_middleware_does_not_call_next_on_rejection(
     """Given an unauthenticated caller,
     When middleware rejects,
     Then call_next is NOT invoked."""
-    ctx = _make_context(tool_name="echo", session_id="bad-id")
+    ctx = _make_context(
+        tool_name="echo", arguments={"_agent_id": "bad-id"},
+    )
 
     call_next_called = False
 
@@ -233,21 +252,23 @@ async def test_tool_name_extracted_from_context(
     When middleware processes it,
     Then the correct tool name is used for auth decision."""
     agent_id = await registry.register(name="carol")
-    ctx = _make_context(tool_name="board_write", session_id=agent_id)
+    ctx = _make_context(
+        tool_name="board_write", arguments={"_agent_id": agent_id},
+    )
     result = await middleware.on_call_tool(ctx, _mock_call_next)
     assert isinstance(result, ToolResult)
 
 
-# ── Unknown session_id rejected ────────────────────────────────────
+# ── Invalid agent_id rejected ──────────────────────────────────────
 
 
-async def test_unknown_session_id_rejected(middleware: AuthMiddleware) -> None:
-    """Given a session_id that doesn't map to any agent,
+async def test_invalid_agent_id_rejected(middleware: AuthMiddleware) -> None:
+    """Given an _agent_id that doesn't map to any agent,
     When calling a non-register tool,
     Then ToolError is raised."""
     ctx = _make_context(
         tool_name="chat_post",
-        session_id="550e8400-e29b-41d4-a716-446655440000",
+        arguments={"_agent_id": "550e8400-e29b-41d4-a716-446655440000"},
     )
     with pytest.raises(ToolError, match="NOT_AUTHORIZED"):
         await middleware.on_call_tool(ctx, _mock_call_next)

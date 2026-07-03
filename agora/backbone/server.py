@@ -13,6 +13,8 @@ Example::
 """
 from __future__ import annotations
 
+import functools
+import inspect
 import logging
 from collections.abc import Awaitable, Callable
 from typing import cast
@@ -20,7 +22,7 @@ from typing import cast
 from fastmcp import FastMCP
 from fastmcp.tools.base import Tool
 
-from agora.backbone import AgoraPlugin
+from agora.backbone import AgoraPlugin, ToolHandler
 from agora.backbone.database import Database
 from agora.backbone.eventbus import EventBus
 from agora.backbone.loader import PluginLoader
@@ -58,6 +60,59 @@ def _make_mcp_wrapper(
         return await router.route(tool_name, arguments, session_id=None)
 
     return _wrapper
+
+
+def _make_typed_wrapper(
+    router: RequestRouter, tool_name: str, handler: ToolHandler,
+) -> _McpWrapper:
+    """Create a typed wrapper for MCP schema generation.
+
+    Wraps the actual handler with a function that preserves the handler's
+    type annotations and signature (excluding ``self`` and ``_agent_id``),
+    so FastMCP can generate correct inputSchema from type hints.
+
+    Args:
+        router: The RequestRouter for dispatching.
+
+        tool_name: Fully qualified tool name.
+
+        handler: The tool handler with typed parameters.
+
+    Returns:
+        An async callable suitable for ``Tool.from_function()``.
+
+    """
+    sig = inspect.signature(handler)
+    handler_ann: dict[str, object] = (
+        handler.__annotations__ if hasattr(handler, "__annotations__") else {}
+    )
+
+    filtered_params = [
+        p for name, p in sig.parameters.items()
+        if name not in ("self", "_agent_id")
+        and p.kind not in (
+            inspect.Parameter.VAR_KEYWORD, inspect.Parameter.VAR_POSITIONAL,
+        )
+    ]
+    new_sig = sig.replace(parameters=filtered_params)
+
+    new_ann: dict[str, object] = {
+        name: ann for name, ann in handler_ann.items()
+        if name not in ("self", "_agent_id")
+    }
+    if "return" in handler_ann:
+        new_ann["return"] = handler_ann["return"]
+    else:
+        new_ann["return"] = dict[str, object]
+
+    @functools.wraps(handler)
+    async def typed_wrapper(**kwargs: object) -> dict[str, object]:
+        return await router.route(tool_name, kwargs, session_id=None)
+
+    typed_wrapper.__signature__ = new_sig  # type: ignore[attr-defined]
+    typed_wrapper.__annotations__ = new_ann
+
+    return typed_wrapper  # type: ignore[return-value]
 
 
 class AgoraServer:
@@ -224,7 +279,14 @@ class AgoraServer:
             msg = f"TOOL_NOT_FOUND: {tool_name}"
             raise KeyError(msg)
         handler = self._router._tools[tool_name]  # noqa: SLF001
-        return await handler(**args)
+        try:
+            return await handler(**args)
+        except TypeError as exc:
+            return {
+                "error": "VALIDATION_ERROR",
+                "message": str(exc),
+                "details": {},
+            }
 
     def _register_backbone_tools(self) -> None:
         """Register backbone management tools on the router."""
@@ -259,58 +321,62 @@ class AgoraServer:
 
     # ── Backbone tool handlers ───────────────────────────────────
 
-    async def _handle_register(
-        self, *_args: object, **kwargs: object,
+    async def _handle_register(  # noqa: D417
+        self,
+        name: str,
+        role: str | None = None,
+        capabilities: list[str] | None = None,
+        manifest: dict[str, object] | None = None,
+        **kwargs: object,  # noqa: ARG002
     ) -> dict[str, object]:
         """Register an agent with the backbone.
 
-        Accepts keyword arguments: ``name``, ``role``, ``capabilities``,
-        ``manifest``.
+        Call this first — all other tools require a registered agent_id.
+
+        Args:
+            name: Human-readable agent name. Must be unique.
+
+            role: Optional role string (e.g. "reviewer", "scout").
+
+            capabilities: List of capability strings.
+
+            manifest: Free-form JSON metadata.
 
         Returns:
             Dict containing the ``agent_id``.
 
         """
         assert self._registry is not None
-        name_val = str(kwargs.get("name", ""))
-        role_val: str | None = str(kwargs["role"]) if "role" in kwargs else None
-        caps_val: list[str] | None = None
-        if "capabilities" in kwargs:
-            raw_caps = kwargs["capabilities"]
-            if isinstance(raw_caps, list):
-                caps_val = [str(c) for c in raw_caps]
-        manifest_val: dict[str, object] | None = None
-        if "manifest" in kwargs:
-            raw_manifest = kwargs["manifest"]
-            if isinstance(raw_manifest, dict):
-                manifest_val = dict(raw_manifest)
         agent_id = await self._registry.register(
-            name=name_val,
-            role=role_val,
-            capabilities=caps_val,
-            manifest=manifest_val,
+            name=name,
+            role=role,
+            capabilities=capabilities,
+            manifest=manifest,
         )
         return {"agent_id": agent_id}
 
-    async def _handle_heartbeat(
-        self, *_args: object, **kwargs: object,
+    async def _handle_heartbeat(  # noqa: D417
+        self, agent_id: str, **kwargs: object,  # noqa: ARG002
     ) -> dict[str, object]:
-        """Update the last heartbeat timestamp for an agent.
+        """Refresh your liveness timestamp. Call every 5 minutes to stay online.
 
-        Accepts keyword argument: ``agent_id``.
+        Args:
+            agent_id: The registered agent UUID.
 
         Returns:
             Dict containing ``ok: True``.
 
         """
         assert self._registry is not None
-        await self._registry.heartbeat(str(kwargs.get("agent_id", "")))
+        await self._registry.heartbeat(agent_id)
         return {"ok": True}
 
     async def _handle_list_agents(
-        self, *_args: object, **_kwargs: object,
+        self, **kwargs: object,  # noqa: ARG002
     ) -> dict[str, object]:
-        """List all registered agents.
+        """List all registered agents with their status, role, and capabilities.
+
+        Use to discover available teammates.
 
         Returns:
             Dict containing ``agents`` list.
@@ -320,32 +386,38 @@ class AgoraServer:
         agents = await self._registry.list_agents()
         return {"agents": agents}
 
-    async def _handle_get_agent(
-        self, *_args: object, **kwargs: object,
+    async def _handle_get_agent(  # noqa: D417
+        self, agent_id: str, **kwargs: object,  # noqa: ARG002
     ) -> dict[str, object]:
-        """Retrieve an agent by its UUID.
+        """Get detailed info for a specific agent by ID.
 
-        Accepts keyword argument: ``agent_id``.
+        Use before assigning work to learn capabilities and status.
+
+        Args:
+            agent_id: The registered agent UUID.
 
         Returns:
             Dict containing ``agent`` dict or None.
 
         """
         assert self._registry is not None
-        agent = await self._registry.get_agent(str(kwargs.get("agent_id", "")))
+        agent = await self._registry.get_agent(agent_id)
         return {"agent": agent}
 
-    async def _handle_get_agent_by_name(
-        self, *_args: object, **kwargs: object,
+    async def _handle_get_agent_by_name(  # noqa: D417
+        self, name: str, **kwargs: object,  # noqa: ARG002
     ) -> dict[str, object]:
-        """Retrieve an agent by its unique name.
+        """Get detailed info for an agent by name.
 
-        Accepts keyword argument: ``name``.
+        Use when you know the name but not the ID.
+
+        Args:
+            name: The unique agent name.
 
         Returns:
             Dict containing ``agent`` dict or None.
 
         """
         assert self._registry is not None
-        agent = await self._registry.get_agent_by_name(str(kwargs.get("name", "")))
+        agent = await self._registry.get_agent_by_name(name)
         return {"agent": agent}

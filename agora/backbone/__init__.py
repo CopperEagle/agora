@@ -6,32 +6,16 @@ that all plugins subclass).
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from agora.backbone.database import Database
     from agora.backbone.eventbus import EventBus
 
 
-@runtime_checkable
-class ToolHandler(Protocol):
-    """Protocol for async tool handler functions.
-
-    Plugins define tool handlers as async functions that accept
-    arbitrary keyword arguments and return a dictionary.
-    """
-
-    async def __call__(self, *args: object, **kwargs: object) -> dict[str, object]:
-        """Execute the tool with the given arguments.
-
-        Args:
-            *args: Positional arguments from MCP.
-            **kwargs: Keyword arguments from MCP.
-
-        Returns:
-            Dict result payload.
-        """
+ToolHandler = Callable[..., Awaitable[dict[str, object]]]  # type: ignore[explicit-any]
 
 
 @dataclass(frozen=True, slots=True)

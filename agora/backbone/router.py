@@ -135,13 +135,6 @@ class RequestRouter:
 
         handler = self._tools[tool_name]
 
-        # Forward the authenticated agent_id to the handler as ``_agent_id``.
-        # This is redundant with the middleware injection for the MCP transport
-        # path, but covers any caller that goes through ``route()`` with a
-        # valid session_id (e.g. future transport integrations).
-        if agent_id is not None:
-            args = {**args, "_agent_id": agent_id}
-
         result = await handler(**args)
 
         await self._eventbus.emit(

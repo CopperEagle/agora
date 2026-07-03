@@ -202,23 +202,25 @@ class ChatPlugin(AgoraPlugin):
     # ── Tool: chat_post_message ──────────────────────────────────
 
     async def _handle_post_message(
-        self, *args: object, **kwargs: object,
+        self, channel: str, content: str,
+        parent_id: str | None = None,
+        **kwargs: object,
     ) -> dict[str, object]:
         """Post a message to a channel.
 
-        Accepts keyword arguments ``channel``, ``content``, and optional
-        ``parent_id``.  Creates the channel if it doesn't exist.
+        Use this when you need to share information with other agents.
+        Auto-creates the channel if needed. Max length: 100,000 characters.
+
+        Args:
+            channel: Channel name (e.g. "#general", "#sprint-planning").
+            content: Message body text.
+            parent_id: Optional UUID of parent message for threading.
 
         Returns:
             Dict with ``message_id``, ``channel``, and ``created_at``.
-
-        Raises:
-            ValueError: If content is empty or exceeds max length.
         """
-        _ = args
-        channel_name = str(kwargs.get("channel", ""))
-        content = str(kwargs.get("content", ""))
-        parent_id: str | None = str(kwargs["parent_id"]) if "parent_id" in kwargs else None
+        _ = kwargs  # _agent_id extracted by middleware
+        channel_name = channel
         agent_id = str(kwargs.get("_agent_id", "unknown"))
 
         if not channel_name:
@@ -281,25 +283,25 @@ class ChatPlugin(AgoraPlugin):
     # ── Tool: chat_read_messages ─────────────────────────────────
 
     async def _handle_read_messages(
-        self, *args: object, **kwargs: object,
+        self, channel: str, since: str | None = None,
+        limit: int = 50, order: str = "asc",
+        **kwargs: object,
     ) -> dict[str, object]:
-        """Read messages from a channel.
+        """Read message history from a channel.
 
-        Accepts keyword arguments ``channel``, ``since``, ``limit`` (default
-        50, max 1000), and ``order`` (``"asc"`` or ``"desc"``).
+        Use this to catch up on conversations or check for updates.
+
+        Args:
+            channel: Channel name (e.g. "#general").
+            since: Optional ISO 8601 timestamp — return only messages >= this time.
+            limit: Max messages to return (0-1000). 0 returns empty list.
+            order: Chronological order ("asc" or "desc").
 
         Returns:
             Dict with a ``messages`` list.
         """
-        _ = args
-        channel_name = str(kwargs.get("channel", ""))
-        since: str | None = str(kwargs["since"]) if "since" in kwargs else None
-        limit_raw = kwargs.get("limit", 50)
-        try:
-            limit = int(str(limit_raw))
-        except (ValueError, TypeError):
-            limit = 50
-
+        _ = kwargs
+        channel_name = channel
         max_limit = 1000
         if limit < 0 or limit > max_limit:
             return {
@@ -307,9 +309,9 @@ class ChatPlugin(AgoraPlugin):
                 "message": f"Limit must be between 0 and {max_limit}",
                 "details": {"limit": limit},
             }
-        order = str(kwargs.get("order", "asc")).lower()
+        order_lower = order.lower()
 
-        if order not in ("asc", "desc"):
+        if order_lower not in ("asc", "desc"):
             return {
                 "error": "VALIDATION_ERROR",
                 "message": "Order must be 'asc' or 'desc'",
@@ -336,7 +338,7 @@ class ChatPlugin(AgoraPlugin):
         channel_id: str = str(chan_rows[0]["id"])
 
         # Build query — direction is validated "asc"/"desc" above
-        direction = "ASC" if order == "asc" else "DESC"
+        direction = "ASC" if order_lower == "asc" else "DESC"
         base_sql = (
             "SELECT id, channel_id, agent_id, parent_id, content_type,"
             " content, created_at FROM chat_messages"
@@ -373,18 +375,19 @@ class ChatPlugin(AgoraPlugin):
     # ── Tool: chat_list_channels ─────────────────────────────────
 
     async def _handle_list_channels(
-        self, *args: object, **kwargs: object,
+        self, prefix: str | None = None, **kwargs: object,
     ) -> dict[str, object]:
         """List all channels with optional prefix filter.
 
-        Accepts optional keyword argument ``prefix``.
+        Use this to discover what teams are discussing — try prefix '#team' for team channels.
+
+        Args:
+            prefix: Optional prefix to filter channel names (e.g. "#dev" returns "#dev-auth").
 
         Returns:
-            Dict with a ``channels`` list, each containing name, topic,
-            message_count, and last_activity_at.
+            Dict with a ``channels`` list.
         """
-        _ = args
-        prefix: str | None = str(kwargs["prefix"]) if "prefix" in kwargs else None
+        _ = kwargs
 
         assert self.database is not None
 
@@ -426,19 +429,21 @@ class ChatPlugin(AgoraPlugin):
     # ── Tool: chat_summarize_channel ─────────────────────────────
 
     async def _handle_summarize_channel(
-        self, *args: object, **kwargs: object,
+        self, channel: str, since: str | None = None, **kwargs: object,
     ) -> dict[str, object]:
-        """Summarize recent activity in a channel.
+        """Get a summary of recent channel activity.
 
-        Accepts keyword arguments ``channel`` and optional ``since``.
+        Use when a channel has too many messages to read individually.
+
+        Args:
+            channel: Channel name.
+            since: Optional ISO 8601 timestamp — only consider messages >= this time.
 
         Returns:
-            Dict with summary text, message_count, participants, and
-            time_span_hours.
+            Dict with summary, message_count, participants, and time_span_hours.
         """
-        _ = args
-        channel_name = str(kwargs.get("channel", ""))
-        since: str | None = str(kwargs["since"]) if "since" in kwargs else None
+        _ = kwargs
+        channel_name = channel
 
         if not channel_name:
             return {

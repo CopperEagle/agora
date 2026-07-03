@@ -185,8 +185,8 @@ async def test_route_handler_receives_args(router: RequestRouter, registry: Agen
     assert len(received) == 1
     assert received[0]["x"] == 1
     assert received[0]["y"] == "two"
-    # route() injects _agent_id when the caller is authenticated
-    assert received[0].get("_agent_id") == agent_id
+    # route() does NOT inject _agent_id — that is the middleware's job.
+    assert "_agent_id" not in received[0]
 
 
 async def test_route_handler_result_returned(
