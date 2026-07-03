@@ -1,6 +1,9 @@
 # 001 — Backbone Scaffold, Plugin API, and Agent Registry
 
+**Status:** ✅ COMPLETE
 **Priority:** P0 | **Phase:** NOW | **Dependencies:** None
+
+> **Implementation note:** This task is complete. See [`DECISIONS.md`](DECISIONS.md) (entries tagged Task 001) for a record of decisions made during implementation that refine or deviate from the original design below.
 
 ## What
 
@@ -158,5 +161,6 @@ This is the kernel. Plugins have nothing to plug into without it. The agent regi
 ## Relevant Context
 
 - **ARCHITECTURE.md** — full design document, layer descriptions, startup/shutdown sequence, plugin API
+- **DECISIONS.md** — decision log with implementation choices that refine or deviate from this design
 - **META.md** — vision, research backing, open questions
 - **opencode.json** in project root — for MCP server configuration

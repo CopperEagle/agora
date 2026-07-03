@@ -281,3 +281,20 @@ WAL mode enabled for concurrent reads+writes. Each plugin manages its own migrat
 | Configuration | Everything or nothing | Enable/disable per plugin |
 | Startup time | Load everything | Load only enabled plugins |
 | Failure isolation | One crash takes down all | Plugin crash doesn't affect others (with isolation) |
+
+---
+
+## Decision Log
+
+Implementation decisions that refine, deviate from, or clarify this design are recorded in [`DECISIONS.md`](DECISIONS.md), tagged by task number. Key entries for Task 001:
+
+- AgoraPlugin is a concrete class with no-op defaults (not ABC)
+- Tool handler signature: `async def handler(*args: object, **kwargs: object) -> dict[str, object]`
+- Auth via FastMCP native Middleware, not in the router
+- `_make_mcp_wrapper` pattern because FastMCP rejects `**kwargs` in `Tool.from_function()`
+- Actual DB schema: `agents` table (not `backbone_agents`); no `backbone_sessions` table
+- Single apsw async connection, no connection pool
+- Plugin lifecycle refined from the original design (see DECISIONS.md §9)
+- `call_tool()` bypasses auth + transport for testing
+
+See [`DECISIONS.md`](DECISIONS.md) for full details.
