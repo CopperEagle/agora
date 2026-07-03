@@ -81,6 +81,7 @@ Critical for a multi-agent server. SQLite WAL mode supports this but the server 
 - Lock acquired by Agent A → Agent B tries to acquire same lock → B gets null or waits
 - Signal sent while multiple agents wait → exactly one agent receives it (or all, depending on design)
 - Plugin `on_startup` while another plugin is already serving requests
+- Concurrency tests should be loops trying several times to ensure correctness
 
 ### Edge Cases
 
