@@ -172,22 +172,40 @@ class ChatPlugin(AgoraPlugin):
             ToolDef(
                 name="post_message",
                 handler=self._handle_post_message,
-                description="Post a message to a channel. Auto-creates the channel if needed.",
+                description=(
+                    "Post a message to a channel. Use this when you"
+                    " need to share information with other agents."
+                    " Auto-creates the channel if needed. Max length:"
+                    " 100,000 characters."
+                ),
             ),
             ToolDef(
                 name="read_messages",
                 handler=self._handle_read_messages,
-                description="Read messages from a channel with optional filtering.",
+                description=(
+                    "Read message history from a channel. Use this"
+                    " when catching up on conversations or checking"
+                    " for updates."
+                ),
             ),
             ToolDef(
                 name="list_channels",
                 handler=self._handle_list_channels,
-                description="List all channels with optional prefix filter.",
+                description=(
+                    "List all channels with optional prefix filter."
+                    " Use this when discovering what teams are"
+                    " discussing — try prefix '#team' for team"
+                    " channels."
+                ),
             ),
             ToolDef(
                 name="summarize_channel",
                 handler=self._handle_summarize_channel,
-                description="Summarize recent channel activity.",
+                description=(
+                    "Summarize recent channel activity. Use this"
+                    " when a channel has too many messages to read"
+                    " individually."
+                ),
             ),
         ]
 

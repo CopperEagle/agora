@@ -269,12 +269,48 @@ class AgoraServer:
         """Register backbone management tools on the router."""
         assert self._router is not None
 
-        self._router.register_tool("register", self._handle_register)
-        self._router.register_tool("heartbeat", self._handle_heartbeat)
-        self._router.register_tool("list_agents", self._handle_list_agents)
-        self._router.register_tool("get_agent", self._handle_get_agent)
         self._router.register_tool(
-            "get_agent_by_name", self._handle_get_agent_by_name,
+            "register",
+            self._handle_register,
+            description=(
+                "Register as an agent with the Agora. Call this"
+                " first — all other tools require a registered"
+                " agent_id."
+            ),
+        )
+        self._router.register_tool(
+            "heartbeat",
+            self._handle_heartbeat,
+            description=(
+                "Refresh your liveness timestamp. Call this every"
+                " 5 minutes to stay online."
+            ),
+        )
+        self._router.register_tool(
+            "list_agents",
+            self._handle_list_agents,
+            description=(
+                "List all registered agents with their status,"
+                " role, and capabilities. Use this when"
+                " discovering available teammates."
+            ),
+        )
+        self._router.register_tool(
+            "get_agent",
+            self._handle_get_agent,
+            description=(
+                "Get detailed info for a specific agent by ID."
+                " Use this when assigning work to learn"
+                " capabilities and status."
+            ),
+        )
+        self._router.register_tool(
+            "get_agent_by_name",
+            self._handle_get_agent_by_name,
+            description=(
+                "Get detailed info for an agent by name. Use"
+                " this when you know the name but not the ID."
+            ),
         )
 
     def _register_tools_with_mcp(self) -> None:

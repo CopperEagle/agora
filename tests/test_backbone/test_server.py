@@ -268,14 +268,15 @@ async def test_tool_descriptions_visible_via_fastmcp() -> None:
                 f"{tool_name} description '{desc}' missing keyword '{keyword}'"
             )
 
-        # Backbone tools exist but have empty descriptions (no ToolDef desc)
+        # Backbone tools carry descriptions from register_tool calls
         for backbone_tool in ("register", "heartbeat", "list_agents",
                               "get_agent", "get_agent_by_name"):
             assert backbone_tool in tools_by_name, (
                 f"{backbone_tool} missing from MCP tools"
             )
-            assert tools_by_name[backbone_tool].description == "", (
-                f"{backbone_tool} should have empty description"
+            desc = tools_by_name[backbone_tool].description
+            assert desc, (
+                f"{backbone_tool} should have a non-empty description"
             )
     finally:
         await srv.stop()
