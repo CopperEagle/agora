@@ -10,7 +10,7 @@ Key principle: **The backbone never calls an LLM.** That's plugin territory.
 
 | File | Responsible for |
 |------|----------------|
-| `__init__.py` | `AgoraPlugin` base class, `ToolDef` dataclass, `ToolHandler` protocol |
+| `__init__.py` | `AgoraPlugin` base class, `ToolDef` dataclass, `ToolHandler` protocol (typed params) |
 | `database.py` | APSW async SQLite wrapper, WAL mode, SHA-256 migration runner |
 | `eventbus.py` | In-process pub/sub (`subscribe`/`emit`/`unsubscribe`) |
 | `registry.py` | Agent register/heartbeat/status/discovery (DB-persisted) |
@@ -59,14 +59,19 @@ class MyPlugin(AgoraPlugin):
 
 ### Tool Handler Signature
 
-Tool handlers **must** match the `ToolHandler` protocol:
+Tool handlers use **typed parameters** (not `**kwargs`). The `_agent_id` parameter is excluded from the MCP schema — it's injected by `AuthMiddleware` after authentication:
 
 ```python
-async def handler(self, *args: object, **kwargs: object) -> dict[str, object]:
+async def handler(self, channel: str, content: str) -> dict[str, object]:
+    """Post a message to a channel.
+
+    Use this when agents need to communicate or announce results.
+    Channels auto-create on first post.
+    """
     ...
 ```
 
-This is required because FastMCP's tool registration creates explicit-parameter wrappers that delegate to `router.route()`, which calls handlers with `**kwargs`.
+`_make_typed_wrapper()` preserves the handler's type annotations so FastMCP's `Tool.from_function()` can auto-generate the `inputSchema`. No manual JSON Schema maintenance — annotations are the source of truth.
 
 ### Database Access
 
@@ -104,13 +109,13 @@ These tools are registered on the router automatically — no plugin needed:
 
 | Tool | Parameters | Returns |
 |------|-----------|---------|
-| `register` | `name`, `role?`, `capabilities?`, `manifest?` | `{"agent_id": "..."}` |
-| `heartbeat` | `agent_id` | `{"ok": true}` |
+| `register` | `name: str`, `role?: str`, `capabilities?: list[str]`, `manifest?: dict` | `{"agent_id": "..."}` |
+| `heartbeat` | `agent_id: str` | `{"ok": true}` |
 | `list_agents` | *(none)* | `{"agents": [...]}` |
-| `get_agent` | `agent_id` | `{"agent": {...} \| None}` |
-| `get_agent_by_name` | `name` | `{"agent": {...} \| None}` |
+| `get_agent` | `agent_id: str` | `{"agent": {...} \| None}` |
+| `get_agent_by_name` | `name: str` | `{"agent": {...} \| None}` |
 
-`register` is the only unauthenticated tool — all others require a registered agent_id.
+`register` is the only unauthenticated tool — all others require a registered `_agent_id` (extracted from arguments by `AuthMiddleware`).
 
 ## Constraints (Never Violate)
 
@@ -155,6 +160,12 @@ Use `server.call_tool()` to invoke handlers directly (bypasses auth):
 ```python
 result = await server.call_tool("register", {"name": "test-agent"})
 agent_id = str(result["agent_id"])
+
+# Typed parameters — matches the handler signature exactly
+result = await server.call_tool("chat_post_message", {
+    "channel": "general",
+    "content": "hello",
+})
 ```
 
 ### Integration tests (in-memory database)
@@ -167,4 +178,16 @@ server = AgoraServer(config={
 await server.start()
 # ... test ...
 await server.stop()
+```
+
+### Schema validation
+
+Tool schemas are auto-generated from typed parameters. To verify a tool's schema:
+
+```python
+tool = server.get_tool("chat_post_message")
+schema = tool.inputSchema
+assert "channel" in schema["properties"]
+assert "content" in schema["properties"]
+assert "_agent_id" not in schema["properties"]  # excluded from schema
 ```

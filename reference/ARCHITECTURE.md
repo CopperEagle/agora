@@ -107,9 +107,9 @@ The registry is part of the backbone because identity must be established **befo
 
 Every MCP tool call passes through the router:
 
-1. **Authenticate**: Extract agent_id from session. Reject if unregistered (except for `register` tool).
+1. **Authenticate**: Extract `_agent_id` from tool call arguments via `AuthMiddleware`. Reject if unregistered (except for `register` tool). See [Authentication](#authentication) below.
 2. **Route**: Map tool name to plugin. Each plugin registers a prefix or explicit list of tool names.
-3. **Execute**: Call the plugin's tool handler with authenticated context (agent_id, session_id included).
+3. **Execute**: Call the plugin's tool handler with the remaining arguments (agent_id already validated, not re-injected).
 4. **Audit**: After execution, backbone logs the call (tool, agent, duration, outcome) to the Log plugin.
 5. **Respond**: Return result to agent.
 
@@ -131,6 +131,28 @@ A simple key-value store (SQLite table) for server and plugin configuration:
 - Server config: transport type, port (for HTTP), heartbeat interval, log level
 - Plugin config: per-plugin settings (e.g., Chat plugin: max message length)
 - Agent preferences: agents can store per-agent config (e.g., "preferred model")
+
+## Authentication
+
+The Agora uses **argument-based authentication** over transport-agnostic MCP:
+
+- Agents include `_agent_id` in tool call arguments (works over stdio, SSE, HTTP)
+- `AuthMiddleware` validates `_agent_id` against AgentRegistry before dispatch
+- The `register` tool is the only unauthenticated tool
+- Agents obtain an `agent_id` by calling `register(name=...)`
+
+This design avoids session-coupled auth, making the server work identically over stdio (no session concept) and Streamable HTTP (sessions exist but aren't the auth source of truth).
+
+## Tool Registration
+
+Each tool handler has typed parameters (replacing `**kwargs`):
+
+- `_make_typed_wrapper()` preserves the handler's type annotations
+- FastMCP `Tool.from_function()` auto-generates `inputSchema` from typed params + docstring
+- No manual JSON Schema maintenance — annotations are the source of truth
+- `_agent_id` is excluded from the generated schema (handled by middleware)
+
+This means tool authors write normal Python functions with typed parameters, and the MCP schema is derived automatically.
 
 ## Plugin API
 
@@ -289,9 +311,9 @@ WAL mode enabled for concurrent reads+writes. Each plugin manages its own migrat
 Implementation decisions that refine, deviate from, or clarify this design are recorded in [`DECISIONS.md`](DECISIONS.md), tagged by task number. Key entries for Task 001:
 
 - AgoraPlugin is a concrete class with no-op defaults (not ABC)
-- Tool handler signature: `async def handler(*args: object, **kwargs: object) -> dict[str, object]`
-- Auth via FastMCP native Middleware, not in the router
-- `_make_mcp_wrapper` pattern because FastMCP rejects `**kwargs` in `Tool.from_function()`
+- Tool handler signature: typed parameters (replacing `**kwargs`), schema auto-generated from annotations
+- Auth via `AuthMiddleware` extracting `_agent_id` from tool call arguments (not session-coupled)
+- `_make_typed_wrapper` pattern preserves type annotations for FastMCP `Tool.from_function()` schema generation
 - Actual DB schema: `agents` table (not `backbone_agents`); no `backbone_sessions` table
 - Single apsw async connection, no connection pool
 - Plugin lifecycle refined from the original design (see DECISIONS.md §9)

@@ -76,3 +76,36 @@ These conventions are not enforced by the backbone — they're conventions for a
 - **Task 001** — the backbone registry implementation (this file is the convention companion)
 - **agent-archetypes/META.md** — each agent's role and capabilities should follow this vocabulary
 - The capability vocabulary should be extended as new agent types are created
+
+## Description Standard
+
+Every tool description follows this template:
+
+> `<action> <what>. Use this when <scenario>. <constraints>.`
+
+Examples:
+
+| Tool | Description |
+|------|-------------|
+| `chat_post_message` | Post a message to a channel. Use this when agents need to communicate or announce results. Channels auto-create on first post. |
+| `board_write` | Write a structured entry to a board topic. Use this when agents need to share mutable state or proposals. Values must match the topic schema. |
+| `lock_acquire` | Acquire an exclusive lock on a named resource. Use this when only one agent should modify a resource at a time. Locks auto-expire after TTL. |
+
+This format helps agents (and humans) quickly decide which tool to call, and what constraints apply.
+
+## Error Response Format
+
+All error responses use a 4-field dict:
+
+```python
+{"error": "ERROR_CODE", "message": "Human-readable", "details": {}, "fix": "Actionable next step"}
+```
+
+| Field | Type | Purpose |
+|-------|------|---------|
+| `error` | `str` | Machine-readable code (e.g. `LOCK_NOT_FOUND`, `AGENT_NOT_REGISTERED`) |
+| `message` | `str` | Human-readable explanation of what went wrong |
+| `details` | `dict` | Contextual data (e.g. the invalid agent_id, the lock name that wasn't found) |
+| `fix` | `str` | Actionable next step the agent can take (e.g. "Call register(name=...) first") |
+
+This structure ensures agents can programmatically handle errors and self-correct without human intervention.
