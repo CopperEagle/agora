@@ -177,7 +177,7 @@ class TestPostMessageSchema:
         assert "parent_id" not in required
 
     def test_schema_excludes_kwargs(self) -> None:
-        """**kwargs and _agent_id are NOT in the schema."""
+        """**kwargs is NOT in the schema, but synthetic _agent_id IS."""
         router = AsyncMock()
         router.route = AsyncMock(return_value={"ok": True})
         wrapper = _make_typed_wrapper(
@@ -186,7 +186,7 @@ class TestPostMessageSchema:
         mcp_tool = Tool.from_function(wrapper, name="chat_post_message")
         props: dict[str, dict[str, object]] = mcp_tool.parameters["properties"]  # type: ignore[index]
         assert "kwargs" not in props
-        assert "_agent_id" not in props
+        assert "_agent_id" in props
 
 
 class TestReadMessagesSchema:

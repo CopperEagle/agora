@@ -41,8 +41,13 @@ def _make_typed_wrapper(
     """Create a typed wrapper for MCP schema generation.
 
     Wraps the actual handler with a function that preserves the handler's
-    type annotations and signature (excluding ``self`` and ``_agent_id``),
-    so FastMCP can generate correct inputSchema from type hints.
+    type annotations and signature (excluding ``self``), so FastMCP can
+    generate correct inputSchema from type hints.
+
+    ``_agent_id`` is included as an optional parameter so FastMCP's
+    Pydantic validation accepts it.  The auth middleware validates and
+    replaces it; the typed wrapper then passes the value as
+    ``session_id`` to the router for the second auth check.
 
     Args:
         router: The RequestRouter for dispatching.
@@ -62,17 +67,25 @@ def _make_typed_wrapper(
 
     filtered_params = [
         p for name, p in sig.parameters.items()
-        if name not in ("self", "_agent_id")
+        if name != "self"
         and p.kind not in (
             inspect.Parameter.VAR_KEYWORD, inspect.Parameter.VAR_POSITIONAL,
         )
     ]
+    # Add _agent_id if not already declared in handler — makes FastMCP
+    # Pydantic validation accept it (middleware pops original, adds validated).
+    if not any(p.name == "_agent_id" for p in filtered_params):
+        _agent_id_param = inspect.Parameter(
+            "_agent_id", inspect.Parameter.KEYWORD_ONLY, default=None,
+        )
+        filtered_params.append(_agent_id_param)
     new_sig = sig.replace(parameters=filtered_params)
 
     new_ann: dict[str, object] = {
         name: ann for name, ann in handler_ann.items()
-        if name not in ("self", "_agent_id")
+        if name != "self"
     }
+    new_ann["_agent_id"] = str | None
     if "return" in handler_ann:
         new_ann["return"] = handler_ann["return"]
     else:
@@ -80,7 +93,11 @@ def _make_typed_wrapper(
 
     @functools.wraps(handler)
     async def typed_wrapper(**kwargs: object) -> dict[str, object]:
-        return await router.route(tool_name, kwargs, session_id=None)
+        agent_id_value = kwargs.get("_agent_id")
+        session_id: str | None = (
+            str(agent_id_value) if agent_id_value is not None else None
+        )
+        return await router.route(tool_name, kwargs, session_id=session_id)
 
     typed_wrapper.__signature__ = new_sig  # type: ignore[attr-defined]
     typed_wrapper.__annotations__ = new_ann

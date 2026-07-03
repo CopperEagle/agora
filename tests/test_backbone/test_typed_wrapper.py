@@ -16,7 +16,7 @@ from agora.backbone.server import _make_typed_wrapper
 
 async def test_wrapper_signature_matches_handler() -> None:
     """Given a handler with typed params, When wrapping, Then the wrapper's
-    signature has the same params (excluding self, _agent_id)."""
+    signature has the same params plus the synthetic _agent_id."""
 
     async def handler(
         channel: str, content: str, parent_id: str | None = None,
@@ -37,15 +37,16 @@ async def test_wrapper_signature_matches_handler() -> None:
 
     sig = inspect.signature(wrapper)
     params = list(sig.parameters.keys())
-    assert params == ["channel", "content", "parent_id"]
+    assert params == ["channel", "content", "parent_id", "_agent_id"]
 
 
 # ── Test 2: excludes self and _agent_id ────────────────────────────
 
 
-async def test_wrapper_excludes_self_and_agent_id() -> None:
+async def test_wrapper_excludes_self_preserves_agent_id() -> None:
     """Given a handler with self and _agent_id params, When wrapping, Then
-    these are excluded from the wrapper signature."""
+    self is excluded but _agent_id is preserved (handler-declared _agent_id
+    prevents synthetic duplicate)."""
 
     async def handler(
         self: object, channel: str, _agent_id: str, content: str,
@@ -60,8 +61,8 @@ async def test_wrapper_excludes_self_and_agent_id() -> None:
     sig = inspect.signature(wrapper)
     params = list(sig.parameters.keys())
     assert "self" not in params
-    assert "_agent_id" not in params
-    assert params == ["channel", "content"]
+    assert "_agent_id" in params
+    assert params == ["channel", "_agent_id", "content"]
 
 
 # ── Test 3: FastMCP schema generation ──────────────────────────────
@@ -101,12 +102,12 @@ async def test_schema_from_wrapper_has_correct_params() -> None:
 # ── Test 4: schema excludes _agent_id ──────────────────────────────
 
 
-async def test_schema_excludes_agent_id() -> None:
-    """Given a handler with _agent_id param, When creating schema, Then
-    _agent_id is NOT in the schema."""
+async def test_schema_includes_agent_id() -> None:
+    """Given a handler, When creating schema, Then the synthetic _agent_id
+    param appears in the schema properties."""
 
     async def handler(
-        channel: str, _agent_id: str, content: str,
+        channel: str, content: str,
     ) -> dict[str, object]:
         return {"ok": True}
 
@@ -120,7 +121,7 @@ async def test_schema_excludes_agent_id() -> None:
     mcp_tool = Tool.from_function(wrapper, name="test_tool")
 
     props: dict[str, dict[str, object]] = mcp_tool.parameters["properties"]  # type: ignore[index]
-    assert "_agent_id" not in props
+    assert "_agent_id" in props
 
 
 # ── Test 5: wrapper delegates to router.route ──────────────────────

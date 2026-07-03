@@ -181,8 +181,10 @@ async def test_handle_list_agents_schema() -> None:
     mcp_tool = Tool.from_function(wrapper, name="list_agents")
 
     params: dict[str, Any] = mcp_tool.parameters  # type: ignore[assignment]
-    # list_agents has no typed params → empty properties
-    assert params.get("properties", {}) == {}
+    # list_agents has no typed params → only _agent_id injected by wrapper
+    props = params.get("properties", {})
+    assert "_agent_id" in props
+    assert len(props) == 1  # only _agent_id
 
 
 # ── Behavioral tests (via server.call_tool) ──────────────────────
