@@ -209,7 +209,7 @@ async def test_plugin_lifecycle(monkeypatch: pytest.MonkeyPatch) -> None:
         assert plugin.startup_called is True
         assert plugin.shutdown_called is False
 
-        result = await srv.call_tool("ping", {})
+        result = await srv.call_tool("lifecycle_ping", {})
         assert result == {"pong": True}
     finally:
         await srv.stop()

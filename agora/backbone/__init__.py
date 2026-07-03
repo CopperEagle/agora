@@ -4,8 +4,14 @@ Provides ToolDef (tool definition dataclass) and AgoraPlugin (base class
 that all plugins subclass).
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
+
+if TYPE_CHECKING:
+    from agora.backbone.database import Database
+    from agora.backbone.eventbus import EventBus
 
 
 @runtime_checkable
@@ -59,6 +65,8 @@ class AgoraPlugin:
     name: str = ""
     version: str = "0.1.0"
     description: str = ""
+    database: Database | None = None
+    eventbus: EventBus | None = None
 
     async def on_load(self, config: dict[str, object]) -> None:
         """Called when the plugin is loaded. Parse and validate config.

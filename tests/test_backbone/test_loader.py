@@ -10,6 +10,7 @@ import pytest
 
 from agora.backbone import AgoraPlugin, ToolDef
 from agora.backbone.database import Database
+from agora.backbone.eventbus import EventBus
 from agora.backbone.loader import PluginLoader
 
 # ── Mock plugin for testing ─────────────────────────────────────
@@ -177,6 +178,12 @@ async def database() -> AsyncGenerator[Database, None]:
     await db.connect()
     yield db
     await db.close()
+
+
+@pytest.fixture
+def eventbus() -> EventBus:
+    """Provide a fresh EventBus instance per test."""
+    return EventBus()
 
 
 # ── Tests ───────────────────────────────────────────────────────
@@ -501,3 +508,25 @@ async def test_plugin_name_not_in_config(
 
     assert len(plugins) == 1
     assert plugins[0].name == "mock"  # class attribute wins
+
+
+async def test_plugin_receives_database_and_eventbus(
+    monkeypatch: pytest.MonkeyPatch,
+    database: Database,
+    eventbus: EventBus,
+) -> None:
+    """Plugin instance gets database and eventbus injected by PluginLoader."""
+    mock_module = _make_mock_module(MockPlugin)
+    monkeypatch.setattr(
+        importlib,
+        "import_module",
+        lambda _name: mock_module,
+    )
+
+    loader = PluginLoader(database=database, eventbus=eventbus)
+    plugins, _tools = await loader.load_plugins([_plugin_config()])
+
+    assert len(plugins) == 1
+    plugin = plugins[0]
+    assert plugin.database is database
+    assert plugin.eventbus is eventbus

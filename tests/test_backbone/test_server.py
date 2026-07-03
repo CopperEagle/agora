@@ -227,3 +227,53 @@ async def test_call_tool_get_agent_by_name(server: AgoraServer) -> None:
     result = await server.call_tool("get_agent_by_name", {"name": "eve"})
     assert result["agent"] is not None
     assert result["agent"]["name"] == "eve"  # type: ignore[index]
+
+
+async def test_tool_descriptions_visible_via_fastmcp() -> None:
+    """Given a server with Chat plugin, When listing MCP tools,
+    Then chat tools have non-empty descriptions and backbone tools have empty."""
+    cfg: dict[str, object] = {
+        "db_path": ":memory:",
+        "plugins": [
+            {
+                "name": "chat",
+                "enabled": True,
+                "module": "agora.plugins.chat",
+                "class_name": "ChatPlugin",
+                "config": {},
+            },
+        ],
+    }
+    srv = AgoraServer(config=cfg, skip_transport=True)
+    await srv.start()
+    try:
+        assert srv._mcp is not None  # noqa: SLF001
+        mcp_tools = await srv._mcp.list_tools(run_middleware=False)  # noqa: SLF001
+        tools_by_name = {t.name: t for t in mcp_tools}
+
+        # Chat tools must carry descriptions from ToolDef
+        chat_expected = {
+            "chat_post_message": "message",
+            "chat_read_messages": "read",
+            "chat_list_channels": "channel",
+            "chat_summarize_channel": "Summarize",
+        }
+        for tool_name, keyword in chat_expected.items():
+            assert tool_name in tools_by_name, f"{tool_name} missing from MCP tools"
+            desc = tools_by_name[tool_name].description
+            assert desc, f"{tool_name} has empty description"
+            assert keyword.lower() in desc.lower(), (
+                f"{tool_name} description '{desc}' missing keyword '{keyword}'"
+            )
+
+        # Backbone tools exist but have empty descriptions (no ToolDef desc)
+        for backbone_tool in ("register", "heartbeat", "list_agents",
+                              "get_agent", "get_agent_by_name"):
+            assert backbone_tool in tools_by_name, (
+                f"{backbone_tool} missing from MCP tools"
+            )
+            assert tools_by_name[backbone_tool].description == "", (
+                f"{backbone_tool} should have empty description"
+            )
+    finally:
+        await srv.stop()

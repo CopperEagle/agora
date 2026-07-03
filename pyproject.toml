@@ -59,6 +59,7 @@ ignore = [
 [tool.mypy]
 strict = true
 python_version = "3.12"
+exclude = ["venv/"]
 warn_unused_ignores = true
 no_implicit_optional = true
 disallow_any_unimported = true

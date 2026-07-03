@@ -164,15 +164,20 @@ class AgoraServer:
         self._loader = PluginLoader(
             database=self._database, eventbus=self._eventbus,
         )
-        plugins, plugin_tools = await self._loader.load_plugins(plugins_cfg)
+        plugins, _plugin_tools = await self._loader.load_plugins(plugins_cfg)
         self._plugins = plugins
 
         # 6. Register backbone tools on router
         self._register_backbone_tools()
 
-        # 7. Register plugin tools on router
-        for tool_name, tool_def in plugin_tools.items():
-            self._router.register_tool(tool_name, tool_def.handler)
+        # 7. Register plugin tools on router with plugin name prefix
+        for plugin in self._plugins:
+            for tool_def in plugin.get_tools():
+                self._router.register_tool(
+                    tool_def.name, tool_def.handler,
+                    prefix=plugin.name,
+                    description=tool_def.description,
+                )
 
         # 8. Create FastMCP server with AuthMiddleware
         self._mcp = FastMCP[None]("agora")
@@ -243,9 +248,13 @@ class AgoraServer:
         assert self._mcp is not None
         assert self._router is not None
 
+        meta_list = self._router.list_tool_metadata()
+        desc_map = {m["name"]: m["description"] for m in meta_list}
+
         for tool_name in self._router.list_tools():
             wrapper = _make_mcp_wrapper(self._router, tool_name)
-            mcp_tool = Tool.from_function(wrapper, name=tool_name)
+            desc = desc_map.get(tool_name, "")
+            mcp_tool = Tool.from_function(wrapper, name=tool_name, description=desc)
             self._mcp.add_tool(mcp_tool)
 
     # ── Backbone tool handlers ───────────────────────────────────

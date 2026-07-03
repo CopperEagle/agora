@@ -142,6 +142,8 @@ class PluginLoader:
 
         # 3. Instantiate (no-arg constructor)
         plugin: AgoraPlugin = plugin_cls()
+        plugin.database = self._database
+        plugin.eventbus = self._eventbus
 
         # 4. on_load — parse and validate config
         await plugin.on_load(plugin_config)

@@ -108,3 +108,83 @@ The plugin loader uses `importlib.import_module()` with naming convention: plugi
 ### 11. No `backbone_` Prefix on Backbone Tables
 
 Tables owned by the backbone use short names (`agents`, `backbone_config`) rather than the design-doc `backbone_agents` prefix. This was a simplification choice — the backbone's ownership is implicit since it controls the database connection.
+
+---
+
+## Task 002 — Chat Plugin
+
+### 1. Tool Prefix Applied by Server, Not Plugin
+
+The design doc shows tools as `ToolDef("chat_post_message", …)` with the prefix hardcoded. In the implementation, plugins define short names (`post_message`, `read_messages`, etc.) and the server prepends the prefix at registration time in `server.py`:
+
+```python
+for plugin in self._plugins:
+    for tool_def in plugin.get_tools():
+        self._router.register_tool(
+            tool_def.name, tool_def.handler, prefix=plugin.name,
+        )
+```
+
+`router.register_tool()` concatenates as `f"{prefix}_{name}"` when a prefix is provided. This eliminates duplication across plugins and ensures every future plugin gets namespacing automatically. The design doc's interface sketch (showing prefixed names in `ToolDef`) was updated — plugins now declare unprefixed names and the backbone handles the rest.
+
+### 2. `limit` Validation: Strict Bounds, Not Clamping
+
+`read_messages` accepts `limit` in `[0, 1000]`. Values outside this range return `VALIDATION_ERROR` rather than being silently clamped — the caller must know their input was invalid. `limit = 0` is valid (returns an empty `messages` list); SQLite `LIMIT 0` works naturally.
+
+### 3. `_agent_id` Injection for Authenticated Calls
+
+The design doc's implicit assumption that "real calls include the agent_id" was not implemented by any component. Two changes were made:
+
+- **Middleware** (`middleware.py`): After authenticating the caller, injects `_agent_id` into `context.message.arguments` before forwarding to the handler. This is the primary path for real MCP calls.
+- **Router** (`router.py`): When `route()` successfully authenticates a `session_id`, it also injects `_agent_id` into handler kwargs — a belt-and-suspenders measure covering any future caller that passes a real `session_id`.
+
+`call_tool()` (testing path) bypasses both middleware and `route()`, calling `handler(**args)` directly. Tests always receive `"unknown"` for `_agent_id`.
+
+### 4. `summarize_channel`: LLM Integration with Graceful Degradation
+
+The `summarize_channel` tool has three modes, forming a graceful degradation chain:
+
+| Mode | Trigger | Behaviour |
+|------|---------|-----------|
+| **Custom LLM** | `llm_api_url` configured | Makes an OpenAI-compatible `POST` via `urllib` (stdlib, no extra dependencies). Sends the last 50 messages formatted as a conversation. Handles URL scheme validation (`http`/`https` only), auth headers, and parse errors gracefully — never raises, always returns a summary string. |
+| **Built-in stub** | `use_built_in_llm = True` | Returns a stats string prefixed with "Built-in LLM summarization not yet implemented." This is a placeholder for a future free/embedded LLM. |
+| **Stats fallback** | Neither configured | Returns a plain-text summary with message count, unique participants, and time span. |
+
+**Key principle: `summarize_channel` never returns an error when the LLM is unavailable.** No LLM endpoint configured → stats fallback. LLM call fails (network error, bad response) → the error is logged and a descriptive string is returned in place of the summary. The tool always returns a well-formed response.
+
+### 5. `_ensure_channel` Uses `asyncio.Lock` for Concurrency Safety
+
+The auto-vivify path (check-then-create) is guarded by `asyncio.Lock` to prevent concurrent `SELECT`-then-`INSERT` races for the same channel name. Without this, two agents posting to a new channel simultaneously could both see "channel not found" and both attempt `INSERT` — the second would hit the `UNIQUE` constraint on `chat_channels.name`. The lock serialises these operations per-plugin-instance.
+
+### 6. `parent_id` Is Advisory (No FK Enforcement)
+
+The `parent_id` column on `chat_messages` accepts any UUID string, even if it references a non-existent message. There is no foreign key constraint on `parent_id` — the design doc's `FOREIGN KEY` only applies to `channel_id`. Orphan `parent_id`s are silently accepted; the field is purely advisory for clients to display threading.
+
+### 7. Event Hooks via Event Bus Subscriptions
+
+The `ChatPlugin` does not rely on the backbone calling `on_agent_register()`/`on_agent_disconnect()` directly. Instead, it subscribes to `agent.registered` and `agent.disconnected` events on the `EventBus` during `on_startup()`. The subscription handlers parse the event payload and delegate to the hook methods. This decouples the plugin from the backbone's lifecycle dispatch — any component that emits these events triggers the chat notifications.
+
+### 8. Database Schema (Actual vs Design Doc)
+
+| Table/Column | Design Doc | Actual | Notes |
+|--------------|------------|--------|-------|
+| `chat_channels` | ✅ | ✅ | All columns match |
+| `chat_messages` | ✅ | ✅ | All columns match, including `parent_id`, `content_type` |
+| `idx_messages_channel_time` | ✅ | ✅ | Index on `(channel_id, created_at)` |
+| `FOREIGN KEY (parent_id)` | ❌ Not specified | ❌ No FK | Advisory only (see entry 6) |
+| `content_type DEFAULT 'text'` | ❌ Not specified | ✅ Implemented | Always `'text'` in v1 |
+
+### 9. Config Keys (Actual vs Design Doc)
+
+| Key | Design Doc | Actual | Default | Notes |
+|-----|------------|--------|---------|-------|
+| `max_message_length` | ✅ Mentioned (100K) | ✅ | 100,000 | — |
+| `max_channels` | ✅ Mentioned | ✅ | 1000 | — |
+| `use_built_in_llm` | ❌ Not specified | ✅ | `False` | Stub only (see entry 4) |
+| `llm_api_url` | ✅ "configurable LLM endpoint" | ✅ | `""` | OpenAI-compatible |
+| `llm_api_key` | ❌ Not specified | ✅ | `""` | Sent as Bearer token |
+| `llm_model` | ✅ "configurable model" | ✅ | `"gpt-4o-mini"` | — |
+| `llm_system_prompt` | ✅ "configurable system prompt" | ✅ | `"Summarize the following chat messages concisely."` | — |
+| `llm_max_tokens` | ✅ "budget limits" | ✅ | 500 | — |
+
+The three keys not in the design doc (`use_built_in_llm`, `llm_api_key`, `max_channels`) were added during implementation. `max_channels` was mentioned in the technical notes but not listed as a config key; `llm_api_key` is a practical requirement for real API calls; `use_built_in_llm` gates the stub implementation.

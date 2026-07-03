@@ -48,12 +48,14 @@ class RequestRouter:
         self._registry = registry
         self._eventbus = eventbus
         self._tools: dict[str, ToolHandler] = {}
+        self._tool_meta: dict[str, str] = {}
 
     def register_tool(
         self,
         name: str,
         handler: ToolHandler,
         prefix: str | None = None,
+        description: str = "",
     ) -> None:
         """Register a tool with its handler function.
 
@@ -66,6 +68,8 @@ class RequestRouter:
 
             prefix: Optional namespace prefix (e.g. ``"chat"``).
 
+            description: Human-readable tool description exposed via MCP.
+
         Raises:
             ValueError: If a tool with the same final name is already registered.
 
@@ -75,6 +79,7 @@ class RequestRouter:
             msg = f"Duplicate tool name: {final_name}"
             raise ValueError(msg)
         self._tools[final_name] = handler
+        self._tool_meta[final_name] = description
 
     async def authenticate(self, session_id: str | None) -> str | None:
         """Look up the agent by session_id and return its agent_id.
@@ -129,6 +134,14 @@ class RequestRouter:
             raise KeyError(msg)
 
         handler = self._tools[tool_name]
+
+        # Forward the authenticated agent_id to the handler as ``_agent_id``.
+        # This is redundant with the middleware injection for the MCP transport
+        # path, but covers any caller that goes through ``route()`` with a
+        # valid session_id (e.g. future transport integrations).
+        if agent_id is not None:
+            args = {**args, "_agent_id": agent_id}
+
         result = await handler(**args)
 
         await self._eventbus.emit(
@@ -148,3 +161,16 @@ class RequestRouter:
 
         """
         return sorted(self._tools)
+
+    def list_tool_metadata(self) -> list[dict[str, str]]:
+        """Return sorted list of tool name and description dicts.
+
+        Returns:
+            List of dicts, each with ``"name"`` and ``"description"`` keys,
+            sorted alphabetically by tool name.
+
+        """
+        return [
+            {"name": name, "description": self._tool_meta.get(name, "")}
+            for name in sorted(self._tools)
+        ]

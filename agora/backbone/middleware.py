@@ -90,4 +90,13 @@ class AuthMiddleware(Middleware):
             msg = "NOT_AUTHORIZED"
             raise ToolError(msg)
 
+        # Inject the authenticated agent_id into tool call arguments so
+        # the handler receives it as ``_agent_id``.  This is the only
+        # path where the real agent identity is available (call_tool
+        # bypasses the middleware entirely).
+        if agent_id is not None and tool_name not in (None, _REGISTER_TOOL):
+            args = context.message.arguments
+            if args is not None:
+                args["_agent_id"] = agent_id
+
         return await call_next(context)

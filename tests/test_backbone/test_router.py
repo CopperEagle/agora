@@ -183,7 +183,10 @@ async def test_route_handler_receives_args(router: RequestRouter, registry: Agen
     await router.route("capture", {"x": 1, "y": "two"}, agent_id)
 
     assert len(received) == 1
-    assert received[0] == {"x": 1, "y": "two"}
+    assert received[0]["x"] == 1
+    assert received[0]["y"] == "two"
+    # route() injects _agent_id when the caller is authenticated
+    assert received[0].get("_agent_id") == agent_id
 
 
 async def test_route_handler_result_returned(

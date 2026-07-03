@@ -2,7 +2,7 @@
 
 A plugin-based MCP coordination server for multi-agent collaboration. A lightweight Python backbone loads plugins (Chat, Board, Log, Memory, Lock/Signal) that provide tools for agents to coordinate through shared persistent state.
 
-**Status:** Backbone complete — plugin development ready.
+**Status:** Backbone complete — Chat plugin shipping. Board, Log, Lock/Signal, and Memory in planning.
 
 ## Quick Start
 
@@ -31,7 +31,7 @@ pytest --cov
 }
 ```
 
-*Note: a `__main__.py` entry point will be added when the first plugin ships. For now, embed `AgoraServer` programmatically.*
+*Note: a `__main__.py` entry point ships with the Chat plugin. Alternatively, embed `AgoraServer` programmatically (see example below).*
 
 ## Configuration
 
@@ -105,9 +105,22 @@ Plugin lifecycle (called by backbone):
 
 ## Built-in Plugins
 
-*Backbone complete — plugins pending implementation:*
+### Chat (shipping)
 
-- **Chat** — channels, messages, summarization (`chat_*` tools)
+Channels, messages, summarization — see `reference/002-chat-plugin.md` for the design.
+
+| Tool | Description |
+|------|-------------|
+| `chat_post_message` | Post a message to a channel (auto-creates if needed) |
+| `chat_read_messages` | Read channel history with limit/since/order |
+| `chat_list_channels` | List all channels, with optional prefix filter |
+| `chat_summarize_channel` | Stats or LLM-powered channel summary |
+
+Channels auto-vivify on first post. Messages are append-only (no edit/delete).  
+Agent lifecycle hooks — agents are welcomed in `#general` on register and announced on disconnect.
+
+### Planned (next)
+
 - **Board** — structured shared workspace (`board_*` tools)
 - **Log** — activity audit, failure tracking, cost projection (`log_*` tools)
 - **Lock/Signal** — resource locking, inter-agent signals (`lock_*` / `signal_*` tools)
@@ -150,7 +163,7 @@ pytest -k "concurrent"          # concurrency tests
 pytest --cov --cov-fail-under=90
 ```
 
-Current coverage: **98%** across all production modules (110 tests).
+Current coverage: **96%+** across all production modules.
 
 ## Performance Targets
 
