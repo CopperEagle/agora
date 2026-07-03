@@ -1,0 +1,73 @@
+[project]
+name = "agora"
+version = "0.1.0"
+description = "Plugin-based MCP coordination server for multi-agent collaboration"
+requires-python = ">=3.12"
+dependencies = [
+    "fastmcp>=3.4",
+    "apsw>=3.53",
+    "pydantic>=2.13",
+    "pydantic-settings>=2.14",
+]
+
+[tool.setuptools.packages.find]
+include = ["agora*"]
+exclude = ["reference*"]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.0",
+    "pytest-asyncio>=1.4",
+    "pytest-cov>=7.0",
+    "ruff>=0.15",
+    "mypy>=2.0",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+    "D203",    # 1 blank line required before class docstring (inconsistent with D211)
+    "D213",    # Multi-line docstring summary should start at second line (inconsistent with D212)
+    "EM101",   # Exception must not use a string literal (raises at startup)
+    "EM102",   # Exception must not use an f-string literal
+    "S101",    # Use of `assert` detected (required for tests)
+    "TC001",   # TYPE_CHECKING import
+    "TC002",   # TYPE_CHECKING import
+    "TC003",   # TYPE_CHECKING import
+    "D100",    # Missing docstring in public module
+    "D104",    # Missing docstring in public package
+    "D107",    # Missing docstring in __init__
+    "ERA001",  # Found commented-out code
+    "N999",    # Invalid module name
+    "FBT001",  # Boolean-typed positional argument
+    "FBT002",  # Boolean default value positional argument
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["D", "ANN", "S101", "PLR2004"]
+"**/__init__.py" = ["D"]
+"conftest.py" = ["D"]
+
+[tool.mypy]
+strict = true
+python_version = "3.12"
+warn_unused_ignores = true
+no_implicit_optional = true
+disallow_any_unimported = true
+disallow_any_expr = false
+disallow_any_decorated = false
+disallow_any_explicit = true
+disallow_any_generics = true
+disallow_subclassing_any = true
+
+[[tool.mypy.overrides]]
+module = ["apsw", "fastmcp.*"]
+ignore_missing_imports = true
