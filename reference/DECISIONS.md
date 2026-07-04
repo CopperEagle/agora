@@ -191,7 +191,7 @@ The three keys not in the design doc (`use_built_in_llm`, `llm_api_key`, `max_ch
 
 ---
 
-## Task 007 — MCP Usability: Typed Wrappers, Auth Fix, Tool Schemas
+## Task 002.5 — MCP Usability: Typed Wrappers, Auth Fix, Tool Schemas
 
 ### 1. Synthetic `_agent_id` in Typed Wrapper Signature
 
