@@ -275,15 +275,19 @@ class AgoraAdmin(App):
         layout: horizontal;
     }
     #nav-pane {
-        width: 40%;
+        width: 25%;
+        min-width: 20;
         dock: left;
         border: solid $primary;
-        height: 100%;
+        height: 1fr;
     }
     #detail-pane {
-        width: 60%;
+        width: 1fr;
         border: solid $primary;
-        height: 100%;
+        height: 1fr;
+    }
+    DataTable {
+        height: 1fr;
     }
     #footer-bar {
         height: 3;
@@ -442,19 +446,19 @@ class AgoraAdmin(App):
         self._current_channel = channel_name
         table = self.query_one("#detail-table", DataTable)
         table.clear(columns=True)
-        table.add_columns("Time", "Agent", "Content", "Parent", "Type")
+        table.add_column("Time", width=20)
+        table.add_column("Agent", width=15)
+        table.add_column("Content", ratio=2)
 
         result = query_messages(self.conn, channel_name, limit=100)
         if isinstance(result, dict) and "error" in result:
-            table.add_row("-", "-", result.get("message", "Error"), "-", "-")
+            table.add_row("-", "-", result.get("message", "Error"))
         else:
             for msg in result:  # type: ignore[union-attr]
                 table.add_row(
                     str(msg.get("created_at", "-")),
                     str(msg.get("agent_id", "-")),
                     str(msg.get("content", "-")),
-                    str(msg.get("parent_id", "-")),
-                    str(msg.get("message_type", "-")),
                 )
         self._update_status()
 
