@@ -291,12 +291,10 @@ class AgoraAdmin(App):
     }
     #message-detail {
         height: 1fr;
+        min-height: 10;
         border: solid $primary;
         padding: 1 2;
-        display: none;
-    }
-    #message-detail.visible {
-        display: block;
+        background: $surface;
     }
     #footer-bar {
         height: 3;
@@ -318,8 +316,8 @@ class AgoraAdmin(App):
         Binding("escape", "clear_filter", "Clear Filter"),
         Binding("r", "refresh", "Refresh"),
         Binding("q", "quit", "Quit"),
-        Binding("left", "focus_tree", "Tree"),
-        Binding("right", "focus_table", "Table"),
+        Binding("tab", "focus_next_panel", "Next Panel"),
+        Binding("shift+tab", "focus_prev_panel", "Prev Panel"),
     ]
 
     def __init__(self, db_path: str = _DEFAULT_DB_PATH) -> None:
@@ -427,7 +425,9 @@ class AgoraAdmin(App):
                 str(agent.get("last_heartbeat_at", "-")),
                 str(agent.get("registered_at", "-")),
             )
-        self.query_one("#message-detail", Static).remove_class("visible")
+        self.query_one("#message-detail", Static).update(
+            "Select a message to view details",
+        )
         self._update_status()
 
     def _show_channels_view(self) -> None:
@@ -444,7 +444,9 @@ class AgoraAdmin(App):
                 str(ch.get("last_activity_at", "-")),
                 str(ch.get("created_at", "-")),
             )
-        self.query_one("#message-detail", Static).remove_class("visible")
+        self.query_one("#message-detail", Static).update(
+            "Select a message to view details",
+        )
         self._update_status()
 
     def _show_channel_messages(self, channel_name: str) -> None:
@@ -474,6 +476,9 @@ class AgoraAdmin(App):
                     str(msg.get("agent_id", "-")),
                     str(msg.get("content", "-")),
                 )
+        self.query_one("#message-detail", Static).update(
+            "Select a message to view details",
+        )
         self._update_status()
 
     def _update_status(self) -> None:
@@ -512,23 +517,23 @@ class AgoraAdmin(App):
 
     # -- Table row selection --------------------------------------------------
 
-    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
-        """Show full message content when a row is selected.
+    def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+        """Show full message content when a row is highlighted.
 
         Args:
-            event: The DataTable row selected event.
+            event: The DataTable row highlighted event.
 
         """
         if self._current_view != "messages":
+            return
+        if event.row_key is None:
             return
         table = self.query_one("#detail-table", DataTable)
         row_data = table.get_row(event.row_key)
         content_col = 2
         if len(row_data) > content_col:
             content = str(row_data[content_col])
-            detail = self.query_one("#message-detail", Static)
-            detail.update(content)
-            detail.add_class("visible")
+            self.query_one("#message-detail", Static).update(content)
 
     # -- Keybindings ---------------------------------------------------------
 
@@ -560,13 +565,46 @@ class AgoraAdmin(App):
         elif self._current_view == "messages" and self._current_channel:
             self._show_channel_messages(self._current_channel)
 
-    def action_focus_tree(self) -> None:
-        """Move focus to the navigation tree."""
-        self.query_one("#nav-tree", Tree).focus()
+    def _panel_order(self) -> list[str]:
+        """Return ordered list of focusable panel IDs."""
+        panels = ["nav-tree", "detail-table"]
+        if self._current_view == "messages":
+            panels.append("message-detail")
+        return panels
 
-    def action_focus_table(self) -> None:
-        """Move focus to the data table."""
-        self.query_one("#detail-table", DataTable).focus()
+    def action_focus_next_panel(self) -> None:
+        """Cycle focus to next panel (Tab)."""
+        panels = self._panel_order()
+        current = self.focused
+        if current is None:
+            self.query_one(f"#{panels[0]}", Tree).focus()
+            return
+        current_id = current.id
+        try:
+            idx = panels.index(current_id)
+            next_idx = (idx + 1) % len(panels)
+        except ValueError:
+            next_idx = 0
+        next_id = panels[next_idx]
+        widget = self.query_one(f"#{next_id}")
+        widget.focus()
+
+    def action_focus_prev_panel(self) -> None:
+        """Cycle focus to previous panel (Shift+Tab)."""
+        panels = self._panel_order()
+        current = self.focused
+        if current is None:
+            self.query_one(f"#{panels[0]}", Tree).focus()
+            return
+        current_id = current.id
+        try:
+            idx = panels.index(current_id)
+            prev_idx = (idx - 1) % len(panels)
+        except ValueError:
+            prev_idx = 0
+        prev_id = panels[prev_idx]
+        widget = self.query_one(f"#{prev_id}")
+        widget.focus()
 
     # -- Client-side filtering -----------------------------------------------
 
