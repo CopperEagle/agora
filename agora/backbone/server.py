@@ -65,6 +65,10 @@ def _make_typed_wrapper(
         handler.__annotations__ if hasattr(handler, "__annotations__") else {}
     )
 
+    _agent_id_desc = (
+        "Your agent UUID obtained from register()."
+        " Include in every call except register."
+    )
     filtered_params = [
         p for name, p in sig.parameters.items()
         if name != "self"
@@ -74,9 +78,13 @@ def _make_typed_wrapper(
     ]
     # Add _agent_id if not already declared in handler — makes FastMCP
     # Pydantic validation accept it (middleware pops original, adds validated).
-    if not any(p.name == "_agent_id" for p in filtered_params):
+    # Skip for 'register' since it's the only unauthenticated tool.
+    if tool_name != "register" and not any(
+        p.name == "_agent_id" for p in filtered_params
+    ):
         _agent_id_param = inspect.Parameter(
             "_agent_id", inspect.Parameter.KEYWORD_ONLY, default=None,
+            annotation=str | None,
         )
         filtered_params.append(_agent_id_param)
     new_sig = sig.replace(parameters=filtered_params)
@@ -85,7 +93,18 @@ def _make_typed_wrapper(
         name: ann for name, ann in handler_ann.items()
         if name != "self"
     }
-    new_ann["_agent_id"] = str | None
+    if tool_name != "register":
+        from typing import Annotated  # noqa: PLC0415
+
+        from pydantic import Field  # noqa: PLC0415
+
+        new_ann["_agent_id"] = Annotated[
+            str | None,
+            Field(
+                default=None,
+                description=_agent_id_desc,
+            ),
+        ]
     if "return" in handler_ann:
         new_ann["return"] = handler_ann["return"]
     else:
@@ -389,10 +408,10 @@ class AgoraServer:
     async def _handle_heartbeat(  # noqa: D417
         self, agent_id: str, **kwargs: object,  # noqa: ARG002
     ) -> dict[str, object]:
-        """Refresh your liveness timestamp. Call every 5 minutes to stay online.
+        """Refresh your liveness timestamp. Call this every 5 minutes to stay online.
 
         Args:
-            agent_id: The registered agent UUID.
+            agent_id: Your own agent UUID obtained from register().
 
         Returns:
             Dict containing ``ok: True``.
@@ -402,19 +421,30 @@ class AgoraServer:
         await self._registry.heartbeat(agent_id)
         return {"ok": True}
 
-    async def _handle_list_agents(
-        self, **kwargs: object,  # noqa: ARG002
+    async def _handle_list_agents(  # noqa: D417
+        self,
+        role: str | None = None,
+        name_prefix: str | None = None,
+        **kwargs: object,  # noqa: ARG002
     ) -> dict[str, object]:
-        """List all registered agents with their status, role, and capabilities.
+        """List all registered agents with optional filtering.
 
-        Use to discover available teammates.
+        Use this when discovering available teammates.  Supports filtering
+        by role and name prefix for multi-team deployments.
+
+        Args:
+            role: Optional role filter (exact match, e.g. "reviewer").
+
+            name_prefix: Optional name prefix filter (e.g. "team-alpha-").
 
         Returns:
             Dict containing ``agents`` list.
 
         """
         assert self._registry is not None
-        agents = await self._registry.list_agents()
+        agents = await self._registry.list_agents(
+            role=role, name_prefix=name_prefix,
+        )
         return {"agents": agents}
 
     async def _handle_get_agent(  # noqa: D417

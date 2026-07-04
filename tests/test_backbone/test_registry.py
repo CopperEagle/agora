@@ -149,17 +149,58 @@ async def test_list_agents_with_filter(registry: AgentRegistry) -> None:
     await registry.register(name="alice", role="scout")
     await registry.register(name="bob", role="builder")
     await registry.register(name="carol", role="scout")
-    agents = await registry.list_agents({"role": "scout"})
+    agents = await registry.list_agents(role="scout")
     names = {a["name"] for a in agents}
     assert names == {"alice", "carol"}
 
 
-async def test_list_agents_invalid_filter_column(registry: AgentRegistry) -> None:
-    """Given a filter with an unknown column, When listing agents,
-    Then ValueError is raised."""
+async def test_list_agents_filter_by_role(registry: AgentRegistry) -> None:
+    """Given agents with different roles, When filtering by role,
+    Then only matching agents are returned."""
+    await registry.register(name="alice", role="scout")
+    await registry.register(name="bob", role="builder")
+    await registry.register(name="carol", role="scout")
+    agents = await registry.list_agents(role="scout")
+    names = {a["name"] for a in agents}
+    assert names == {"alice", "carol"}
+
+
+async def test_list_agents_filter_by_name_prefix(registry: AgentRegistry) -> None:
+    """Given agents with different name prefixes, When filtering by name_prefix,
+    Then only matching agents are returned."""
+    await registry.register(name="team-alpha-alice")
+    await registry.register(name="team-beta-bob")
+    await registry.register(name="team-alpha-carol")
+    agents = await registry.list_agents(name_prefix="team-alpha-")
+    names = {a["name"] for a in agents}
+    assert names == {"team-alpha-alice", "team-alpha-carol"}
+
+
+async def test_list_agents_compose_filters(registry: AgentRegistry) -> None:
+    """Given agents with different roles and name prefixes, When filtering by both,
+    Then only agents matching both criteria are returned."""
+    await registry.register(name="team-alpha-alice", role="scout")
+    await registry.register(name="team-alpha-bob", role="builder")
+    await registry.register(name="team-beta-carol", role="scout")
+    agents = await registry.list_agents(role="scout", name_prefix="team-alpha-")
+    names = {a["name"] for a in agents}
+    assert names == {"team-alpha-alice"}
+
+
+async def test_list_agents_unknown_filter(registry: AgentRegistry) -> None:
+    """Given no agents with a specific role, When filtering by that role,
+    Then an empty list is returned (not an error)."""
+    await registry.register(name="alice", role="scout")
+    agents = await registry.list_agents(role="nonexistent-role")
+    assert agents == []
+
+
+async def test_list_agents_empty_prefix(registry: AgentRegistry) -> None:
+    """Given no agents with a specific name prefix, When filtering by that prefix,
+    Then an empty list is returned (not an error)."""
     await registry.register(name="alice")
-    with pytest.raises(ValueError, match="Invalid filter column"):
-        await registry.list_agents({"nonexistent_column": "value"})
+    agents = await registry.list_agents(name_prefix="nonexistent-")
+    assert agents == []
 
 
 # ---------- Find agents by capability ----------

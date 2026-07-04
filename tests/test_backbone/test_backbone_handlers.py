@@ -77,13 +77,21 @@ async def test_handle_heartbeat_signature() -> None:
 
 async def test_handle_list_agents_signature() -> None:
     """Given the _handle_list_agents method, When inspecting its signature,
-    Then it has no positional params (only self and **kwargs)."""
+    Then it has role and name_prefix params."""
     sig = inspect.signature(AgoraServer._handle_list_agents)
     params = sig.parameters
 
-    # Only self and kwargs
-    param_names = [p for p in params if p not in ("self",)]
-    assert param_names == ["kwargs"]
+    # role: str | None = None (optional)
+    assert "role" in params
+    assert params["role"].default is None
+
+    # name_prefix: str | None = None (optional)
+    assert "name_prefix" in params
+    assert params["name_prefix"].default is None
+
+    # self and **kwargs still present
+    assert "self" in params
+    assert "kwargs" in params
 
 
 async def test_handle_get_agent_signature() -> None:
@@ -165,7 +173,7 @@ async def test_handle_heartbeat_schema() -> None:
 
 async def test_handle_list_agents_schema() -> None:
     """Given the list_agents handler, When creating a FastMCP Tool,
-    Then the schema has no properties."""
+    Then the schema has role and name_prefix properties."""
     from fastmcp.tools.base import Tool
 
     mock_instance = AsyncMock(spec=AgoraServer)
@@ -181,10 +189,22 @@ async def test_handle_list_agents_schema() -> None:
     mcp_tool = Tool.from_function(wrapper, name="list_agents")
 
     params: dict[str, Any] = mcp_tool.parameters  # type: ignore[assignment]
-    # list_agents has no typed params → only _agent_id injected by wrapper
     props = params.get("properties", {})
+    assert "role" in props
+    # Optional params use anyOf: [{type: string}, {type: null}]
+    role_schema = props["role"]
+    if "anyOf" in role_schema:
+        assert any(s.get("type") == "string" for s in role_schema["anyOf"])
+    else:
+        assert role_schema["type"] == "string"
+    assert "name_prefix" in props
+    name_prefix_schema = props["name_prefix"]
+    if "anyOf" in name_prefix_schema:
+        assert any(s.get("type") == "string" for s in name_prefix_schema["anyOf"])
+    else:
+        assert name_prefix_schema["type"] == "string"
     assert "_agent_id" in props
-    assert len(props) == 1  # only _agent_id
+    assert len(props) == 3  # role, name_prefix, _agent_id
 
 
 # ── Behavioral tests (via server.call_tool) ──────────────────────

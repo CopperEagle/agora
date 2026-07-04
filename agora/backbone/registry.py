@@ -35,11 +35,7 @@ CREATE TABLE IF NOT EXISTS agents (
 )""",
 ]
 
-_ALLOWED_FILTER_COLUMNS: frozenset[str] = frozenset({
-    "name",
-    "role",
-    "status",
-})
+
 
 
 def _now_iso() -> str:
@@ -224,33 +220,33 @@ class AgentRegistry:
 
     async def list_agents(
         self,
-        agent_filter: dict[str, object] | None = None,
+        role: str | None = None,
+        name_prefix: str | None = None,
     ) -> list[dict[str, object]]:
-        """List agents, optionally filtered by key/value pairs.
+        """List agents with optional filtering by role and name prefix.
+
+        Use this when discovering available teammates.  Supports
+        filtering by role and name prefix for multi-team deployments.
 
         Args:
-            agent_filter: Dict of column/value pairs to filter on.
-                If ``None``, all agents are returned.
+            role: Optional role filter (exact match, e.g. ``"reviewer"``).
+
+            name_prefix: Optional name prefix filter (e.g. ``"team-alpha-"``).
 
         Returns:
             List of agent dicts in registration order.
 
         """
-        if agent_filter is None:
-            rows = await self._database.execute("SELECT * FROM agents ORDER BY registered_at")
-            return [_row_to_agent(r) for r in rows]
-
-        where_clauses: list[str] = []
-        params: list[str | None] = []
-        for key, value in agent_filter.items():
-            if key not in _ALLOWED_FILTER_COLUMNS:
-                msg = f"Invalid filter column: {key}"
-                raise ValueError(msg)
-            where_clauses.append(f"{key} = ?")
-            params.append(str(value))
-
-        sql = f"SELECT * FROM agents WHERE {' AND '.join(where_clauses)} ORDER BY registered_at"  # noqa: S608
-        rows = await self._database.execute(sql, tuple(params))
+        query = "SELECT * FROM agents WHERE 1=1"
+        params: list[str] = []
+        if role is not None:
+            query += " AND role = ?"
+            params.append(role)
+        if name_prefix is not None:
+            query += " AND name LIKE ?"
+            params.append(f"{name_prefix}%")
+        query += " ORDER BY registered_at ASC"
+        rows = await self._database.execute(query, tuple(params))
         return [_row_to_agent(r) for r in rows]
 
     async def find_agents(self, capability: str) -> list[dict[str, object]]:
