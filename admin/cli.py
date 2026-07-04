@@ -286,8 +286,17 @@ class AgoraAdmin(App):
         border: solid $primary;
         height: 1fr;
     }
-    DataTable {
+    #detail-table {
+        height: 60%;
+    }
+    #message-detail {
         height: 1fr;
+        border: solid $primary;
+        padding: 1 2;
+        display: none;
+    }
+    #message-detail.visible {
+        display: block;
     }
     #footer-bar {
         height: 3;
@@ -309,6 +318,8 @@ class AgoraAdmin(App):
         Binding("escape", "clear_filter", "Clear Filter"),
         Binding("r", "refresh", "Refresh"),
         Binding("q", "quit", "Quit"),
+        Binding("left", "focus_tree", "Tree"),
+        Binding("right", "focus_table", "Table"),
     ]
 
     def __init__(self, db_path: str = _DEFAULT_DB_PATH) -> None:
@@ -337,6 +348,7 @@ class AgoraAdmin(App):
             yield Tree("Agora Admin", id="nav-tree")
         with Vertical(id="detail-pane"):
             yield DataTable(id="detail-table")
+            yield Static("", id="message-detail")
         with Horizontal(id="footer-bar"):
             yield Label("", id="status-label")
             yield Input(placeholder="Filter...", id="filter-input")
@@ -415,6 +427,7 @@ class AgoraAdmin(App):
                 str(agent.get("last_heartbeat_at", "-")),
                 str(agent.get("registered_at", "-")),
             )
+        self.query_one("#message-detail", Static).remove_class("visible")
         self._update_status()
 
     def _show_channels_view(self) -> None:
@@ -431,6 +444,7 @@ class AgoraAdmin(App):
                 str(ch.get("last_activity_at", "-")),
                 str(ch.get("created_at", "-")),
             )
+        self.query_one("#message-detail", Static).remove_class("visible")
         self._update_status()
 
     def _show_channel_messages(self, channel_name: str) -> None:
@@ -496,6 +510,26 @@ class AgoraAdmin(App):
             channel_name = data.split(":", 1)[1]
             self._show_channel_messages(channel_name)
 
+    # -- Table row selection --------------------------------------------------
+
+    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        """Show full message content when a row is selected.
+
+        Args:
+            event: The DataTable row selected event.
+
+        """
+        if self._current_view != "messages":
+            return
+        table = self.query_one("#detail-table", DataTable)
+        row_data = table.get_row(event.row_key)
+        content_col = 2
+        if len(row_data) > content_col:
+            content = str(row_data[content_col])
+            detail = self.query_one("#message-detail", Static)
+            detail.update(content)
+            detail.add_class("visible")
+
     # -- Keybindings ---------------------------------------------------------
 
     def action_focus_filter(self) -> None:
@@ -525,6 +559,14 @@ class AgoraAdmin(App):
             self._show_channels_view()
         elif self._current_view == "messages" and self._current_channel:
             self._show_channel_messages(self._current_channel)
+
+    def action_focus_tree(self) -> None:
+        """Move focus to the navigation tree."""
+        self.query_one("#nav-tree", Tree).focus()
+
+    def action_focus_table(self) -> None:
+        """Move focus to the data table."""
+        self.query_one("#detail-table", DataTable).focus()
 
     # -- Client-side filtering -----------------------------------------------
 
