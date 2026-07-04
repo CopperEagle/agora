@@ -295,7 +295,6 @@ class AgoraAdmin(App):
         border: solid $primary;
         padding: 1 2;
         background: $surface;
-        can_focus: true;
     }
     #footer-bar {
         height: 3;
@@ -594,10 +593,7 @@ class AgoraAdmin(App):
 
     def _panel_order(self) -> list[str]:
         """Return ordered list of focusable panel IDs."""
-        panels = ["nav-tree", "detail-table"]
-        if self._current_view == "messages":
-            panels.append("message-detail")
-        return panels
+        return ["nav-tree", "detail-table"]
 
     def action_focus_next_panel(self) -> None:
         """Cycle focus to next panel (Tab)."""
