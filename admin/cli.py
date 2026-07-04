@@ -448,7 +448,7 @@ class AgoraAdmin(App):
         table.clear(columns=True)
         table.add_column("Time", width=20)
         table.add_column("Agent", width=15)
-        table.add_column("Content", ratio=2)
+        table.add_column("Content", width=100)
 
         result = query_messages(self.conn, channel_name, limit=100)
         if isinstance(result, dict) and "error" in result:
