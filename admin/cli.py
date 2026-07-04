@@ -318,6 +318,8 @@ class AgoraAdmin(App):
         Binding("q", "quit", "Quit"),
         Binding("tab", "focus_next_panel", "Next Panel"),
         Binding("shift+tab", "focus_prev_panel", "Prev Panel"),
+        Binding("ctrl+left", "focus_tree", "Tree"),
+        Binding("ctrl+right", "focus_table", "Table"),
     ]
 
     def __init__(self, db_path: str = _DEFAULT_DB_PATH) -> None:
@@ -479,9 +481,14 @@ class AgoraAdmin(App):
                     str(msg.get("agent_id", "-")),
                     str(msg.get("content", "-")),
                 )
-        self.query_one("#message-detail", Static).update(
-            "Select a message to view details",
-        )
+        if self._current_messages:
+            first_msg = self._current_messages[0]
+            content = str(first_msg.get("content", "-"))
+            self.query_one("#message-detail", Static).update(content)
+        else:
+            self.query_one("#message-detail", Static).update(
+                "Select a message to view details",
+            )
         self._update_status()
 
     def _update_status(self) -> None:
@@ -628,6 +635,14 @@ class AgoraAdmin(App):
         prev_id = panels[prev_idx]
         widget = self.query_one(f"#{prev_id}")
         widget.focus()
+
+    def action_focus_tree(self) -> None:
+        """Move focus to the navigation tree."""
+        self.query_one("#nav-tree", Tree).focus()
+
+    def action_focus_table(self) -> None:
+        """Move focus to the data table."""
+        self.query_one("#detail-table", DataTable).focus()
 
     # -- Client-side filtering -----------------------------------------------
 
