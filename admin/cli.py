@@ -295,6 +295,7 @@ class AgoraAdmin(App):
         border: solid $primary;
         padding: 1 2;
         background: $surface;
+        can_focus: true;
     }
     #footer-bar {
         height: 3;
@@ -334,6 +335,7 @@ class AgoraAdmin(App):
         self.channels: list[dict[str, object]] = []
         self._current_view: str = "agents"
         self._current_channel: str | None = None
+        self._current_messages: list[dict[str, object]] = []
 
     def compose(self) -> ComposeResult:
         """Build the UI layout.
@@ -468,8 +470,10 @@ class AgoraAdmin(App):
 
         result = query_messages(self.conn, channel_name, limit=100)
         if isinstance(result, dict) and "error" in result:
+            self._current_messages = []
             table.add_row("-", "-", result.get("message", "Error"))
         else:
+            self._current_messages = result  # type: ignore[assignment]
             for msg in result:  # type: ignore[union-attr]
                 table.add_row(
                     str(msg.get("created_at", "-")),
@@ -515,6 +519,24 @@ class AgoraAdmin(App):
             channel_name = data.split(":", 1)[1]
             self._show_channel_messages(channel_name)
 
+    def on_tree_node_highlighted(self, event: Tree.NodeHighlighted) -> None:
+        """Handle tree node highlight (cursor movement updates right panel).
+
+        Args:
+            event: The tree node highlight event.
+
+        """
+        if event.node is None or event.node.data is None:
+            return
+        data = event.node.data
+        if data == "agents":
+            self._show_agents_view()
+        elif data == "channels":
+            self._show_channels_view()
+        elif isinstance(data, str) and data.startswith("channel:"):
+            channel_name = data.split(":", 1)[1]
+            self._show_channel_messages(channel_name)
+
     # -- Table row selection --------------------------------------------------
 
     def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
@@ -529,11 +551,16 @@ class AgoraAdmin(App):
         if event.row_key is None:
             return
         table = self.query_one("#detail-table", DataTable)
-        row_data = table.get_row(event.row_key)
-        content_col = 2
-        if len(row_data) > content_col:
-            content = str(row_data[content_col])
-            self.query_one("#message-detail", Static).update(content)
+        # Get row index from the row_key
+        try:
+            row_index = table.get_row_index(event.row_key)
+        except KeyError:
+            return
+        if 0 <= row_index < len(self._current_messages):
+            msg = self._current_messages[row_index]
+            content = str(msg.get("content", "-"))
+            detail = self.query_one("#message-detail", Static)
+            detail.update(content)
 
     # -- Keybindings ---------------------------------------------------------
 
