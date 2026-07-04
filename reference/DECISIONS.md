@@ -188,3 +188,31 @@ The `ChatPlugin` does not rely on the backbone calling `on_agent_register()`/`on
 | `llm_max_tokens` | ✅ "budget limits" | ✅ | 500 | — |
 
 The three keys not in the design doc (`use_built_in_llm`, `llm_api_key`, `max_channels`) were added during implementation. `max_channels` was mentioned in the technical notes but not listed as a config key; `llm_api_key` is a practical requirement for real API calls; `use_built_in_llm` gates the stub implementation.
+
+---
+
+## Task 007 — MCP Usability: Typed Wrappers, Auth Fix, Tool Schemas
+
+### 1. Synthetic `_agent_id` in Typed Wrapper Signature
+
+**Context:** FastMCP's `Tool.from_function()` creates a Pydantic model from the tool function's `__signature__`. When an agent includes `_agent_id` in tool call arguments (required by `AuthMiddleware` for authentication), Pydantic rejects it as an unexpected parameter if `_agent_id` is not declared in the signature.
+
+**Decision:** `_make_typed_wrapper()` in `server.py` now synthetically adds `_agent_id` as a `KEYWORD_ONLY` parameter with `default=None` to every tool's wrapper signature. This ensures:
+
+1. **FastMCP acceptance**: Pydantic validation passes because `_agent_id` is a declared optional parameter.
+2. **Schema visibility**: `_agent_id` appears in every tool's `inputSchema` as an optional property, making it discoverable by agents.
+3. **Auth propagation**: The typed wrapper extracts `_agent_id` from kwargs and passes it as `session_id` to `router.route()` for the second-layer auth check.
+
+**Auth flow (updated):**
+
+```
+Agent call → FastMCP recv → AuthMiddleware (extracts _agent_id from raw args,
+validates against AgentRegistry, injects validated value back into args)
+→ FastMCP Pydantic validation (accepts _agent_id because declared in schema)
+→ typed_wrapper(**kwargs) → router.route(tool_name, kwargs, session_id=_agent_id)
+→ router.authenticate(session_id) → handler(**args)
+```
+
+**`_agent_id` is always optional** in the schema (`default=None`) — it is never required. The `register` tool is the only tool that works without it; all others return `NOT_AUTHORIZED` if `_agent_id` is missing or invalid.
+
+**Key implication for plugin authors:** Plugin handlers do NOT need to declare `_agent_id` in their typed parameters. The wrapper adds it automatically. Handlers can safely ignore `_agent_id` — it's handled by middleware and router.

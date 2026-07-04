@@ -150,7 +150,7 @@ Each tool handler has typed parameters (replacing `**kwargs`):
 - `_make_typed_wrapper()` preserves the handler's type annotations
 - FastMCP `Tool.from_function()` auto-generates `inputSchema` from typed params + docstring
 - No manual JSON Schema maintenance — annotations are the source of truth
-- `_agent_id` is excluded from the generated schema (handled by middleware)
+- `_agent_id` is included in the generated schema as an optional parameter (FastMCP's Pydantic validation requires it declared; `AuthMiddleware` validates and injects the authenticated value)
 
 This means tool authors write normal Python functions with typed parameters, and the MCP schema is derived automatically.
 
@@ -314,6 +314,7 @@ Implementation decisions that refine, deviate from, or clarify this design are r
 - Tool handler signature: typed parameters (replacing `**kwargs`), schema auto-generated from annotations
 - Auth via `AuthMiddleware` extracting `_agent_id` from tool call arguments (not session-coupled)
 - `_make_typed_wrapper` pattern preserves type annotations for FastMCP `Tool.from_function()` schema generation
+- `_agent_id` is synthetically included in every tool's wrapper signature as an optional parameter (so FastMCP Pydantic validation accepts it); the middleware validates and injects the authenticated value before dispatch
 - Actual DB schema: `agents` table (not `backbone_agents`); no `backbone_sessions` table
 - Single apsw async connection, no connection pool
 - Plugin lifecycle refined from the original design (see DECISIONS.md §9)

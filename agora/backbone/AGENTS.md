@@ -59,7 +59,7 @@ class MyPlugin(AgoraPlugin):
 
 ### Tool Handler Signature
 
-Tool handlers use **typed parameters** (not `**kwargs`). The `_agent_id` parameter is excluded from the MCP schema — it's injected by `AuthMiddleware` after authentication:
+Tool handlers use **typed parameters** (not `**kwargs**`). The `_agent_id` parameter is synthetically included in every tool's MCP schema as an optional parameter — FastMCP's Pydantic validation needs it declared to accept it. The `AuthMiddleware` validates and injects the authenticated value before dispatch:
 
 ```python
 async def handler(self, channel: str, content: str) -> dict[str, object]:
@@ -71,7 +71,7 @@ async def handler(self, channel: str, content: str) -> dict[str, object]:
     ...
 ```
 
-`_make_typed_wrapper()` preserves the handler's type annotations so FastMCP's `Tool.from_function()` can auto-generate the `inputSchema`. No manual JSON Schema maintenance — annotations are the source of truth.
+`_make_typed_wrapper()` preserves the handler's type annotations and adds `_agent_id` as a synthetic optional parameter so FastMCP can auto-generate the `inputSchema`. The middleware validates `_agent_id` from the raw tool arguments; the typed wrapper then passes it as `session_id` to the router for the second auth check.
 
 ### Database Access
 
@@ -189,5 +189,5 @@ tool = server.get_tool("chat_post_message")
 schema = tool.inputSchema
 assert "channel" in schema["properties"]
 assert "content" in schema["properties"]
-assert "_agent_id" not in schema["properties"]  # excluded from schema
+assert "_agent_id" in schema["properties"]  # synthetic optional param
 ```
