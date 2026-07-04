@@ -13,6 +13,7 @@ from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
+from textual.events import Key
 from textual.widgets import DataTable, Input, Label, Static, Tree
 
 logger = logging.getLogger(__name__)
@@ -318,8 +319,6 @@ class AgoraAdmin(App):
         Binding("q", "quit", "Quit"),
         Binding("tab", "focus_next_panel", "Next Panel"),
         Binding("shift+tab", "focus_prev_panel", "Prev Panel"),
-        Binding("ctrl+left", "focus_tree", "Tree"),
-        Binding("ctrl+right", "focus_table", "Table"),
     ]
 
     def __init__(self, db_path: str = _DEFAULT_DB_PATH) -> None:
@@ -545,23 +544,19 @@ class AgoraAdmin(App):
 
     # -- Table row selection --------------------------------------------------
 
-    def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+    def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:  # noqa: ARG002
         """Show full message content when a row is highlighted.
 
-        Args:
-            event: The DataTable row highlighted event.
+        Uses cursor_coordinate.row for reliable index lookup instead of
+        get_row_index(row_key) which can fail with various exception types.
 
         """
         if self._current_view != "messages":
             return
-        if event.row_key is None:
+        if not self._current_messages:
             return
         table = self.query_one("#detail-table", DataTable)
-        # Get row index from the row_key
-        try:
-            row_index = table.get_row_index(event.row_key)
-        except KeyError:
-            return
+        row_index = table.cursor_coordinate.row
         if 0 <= row_index < len(self._current_messages):
             msg = self._current_messages[row_index]
             content = str(msg.get("content", "-"))
@@ -643,6 +638,24 @@ class AgoraAdmin(App):
     def action_focus_table(self) -> None:
         """Move focus to the data table."""
         self.query_one("#detail-table", DataTable).focus()
+
+    def on_key(self, event: Key) -> None:
+        """Intercept left/right arrows before widgets capture them.
+
+        Left arrow: switch focus from DataTable → Tree (only when DataTable focused)
+        Right arrow: switch focus from Tree → DataTable (only when Tree focused)
+
+        """
+        if event.key == "left":
+            focused = self.focused
+            if focused is not None and focused.id == "detail-table":
+                event.prevent_default()
+                self.query_one("#nav-tree", Tree).focus()
+        elif event.key == "right":
+            focused = self.focused
+            if focused is not None and focused.id == "nav-tree":
+                event.prevent_default()
+                self.query_one("#detail-table", DataTable).focus()
 
     # -- Client-side filtering -----------------------------------------------
 
