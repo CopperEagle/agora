@@ -12,7 +12,9 @@ Boost your project by having your agents coordinate across boundaries and to red
 Allow many dozens of agents to collaborate *on their own* without explicit programming and across different subteams.
 
 ```bash
-pip install agora[admin]
+git clone https://github.com/CopperEagle/agora
+cd agora
+pip install .[admin]  # or uv pip install .[admin]
 ```
 
 ```jsonc
@@ -46,7 +48,7 @@ pip install agora[admin]
 A Textual-based terminal UI to inspect the Agora database — useful for debugging, monitoring, and understanding what your agents are doing.
 
 ```
-pip install agora[admin]    # or: uv sync --extra admin
+pip install .[admin]    # or: uv sync --extra admin
 
 python -m agora.admin --db /path/to/agora.db
 ```
