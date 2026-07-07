@@ -10,11 +10,15 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 import urllib.parse
 import urllib.request
 import uuid
+from collections import defaultdict
 from collections.abc import Sequence
 from datetime import UTC, datetime
+
+import apsw
 
 from agora.backbone import AgoraPlugin, ToolDef
 
@@ -24,6 +28,7 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_MAX_MESSAGE_LENGTH = 100_000
 _DEFAULT_MAX_CHANNELS = 1000
+_MAX_WAITERS_PER_CHANNEL = 100
 _SYSTEM_AGENT_ID = "system"
 _CHANNEL_GENERAL = "#general"
 
@@ -66,6 +71,7 @@ class ChatPlugin(AgoraPlugin):
         self.use_built_in_llm: bool = False
         self._channel_names: set[str] = set()
         self._channel_lock: asyncio.Lock = asyncio.Lock()
+        self._waiters: defaultdict[str, list[asyncio.Event]] = defaultdict(list)
 
     # ── Lifecycle hooks ──────────────────────────────────────────
 
@@ -104,9 +110,29 @@ class ChatPlugin(AgoraPlugin):
             self.eventbus.subscribe(
                 "agent.disconnected", self._on_agent_disconnected_event,
             )
+            self.eventbus.subscribe(
+                "chat.message.posted", self._on_message_posted,
+            )
 
     async def on_shutdown(self) -> None:
-        """Cleanup stub — nothing persistent to flush."""
+        """Cleanup — wake all waiters and clear caches."""
+        if self.eventbus is not None:
+            self.eventbus.unsubscribe(
+                "chat.message.posted", self._on_message_posted,
+            )
+            self.eventbus.unsubscribe(
+                "agent.registered", self._on_agent_registered_event,
+            )
+            self.eventbus.unsubscribe(
+                "agent.disconnected", self._on_agent_disconnected_event,
+            )
+        for channel_waiters in self._waiters.values():
+            for event in channel_waiters:
+                try:
+                    event.set()
+                except Exception:
+                    logger.exception("Failed to wake waiter during shutdown")
+        self._waiters.clear()
         self._channel_names.clear()
 
     # ── Agent lifecycle hooks ─────────────────────────────────────
@@ -159,6 +185,255 @@ class ChatPlugin(AgoraPlugin):
         if agent_id:
             await self.on_agent_disconnect(agent_id)
 
+    async def _on_message_posted(
+        self, event_name: str, **data: object,
+    ) -> None:
+        """Wake waiters on the channel that received a new message.
+
+        Each ``asyncio.Event.set()`` is wrapped in a try/except so one
+        broken waiter never prevents others from being woken.
+
+        Args:
+            event_name: The event name (unused).
+            **data: Event payload containing ``channel``.
+        """
+        _ = event_name
+        channel = str(data.get("channel", ""))
+        for event in self._waiters.get(channel, []):
+            try:
+                event.set()
+            except Exception:
+                logger.exception(
+                    "Failed to wake waiter on channel %s", channel,
+                )
+
+    # ── Await-update helpers ───────────────────────────────────
+
+    async def _count_messages_since(
+        self, channel: str, since: str | None = None,
+    ) -> int:
+        """Count messages in a channel, optionally filtered by timestamp.
+
+        Args:
+            channel: Channel name.
+            since: Optional ISO 8601 timestamp lower bound (inclusive).
+
+        Returns:
+            The number of matching messages.
+        """
+        assert self.database is not None
+        chan_rows = await self.database.execute(
+            "SELECT id FROM chat_channels WHERE name = ?",
+            (channel,),
+        )
+        if not chan_rows:
+            return 0
+        channel_id = str(chan_rows[0]["id"])
+        if since:
+            rows = await self.database.execute(
+                "SELECT COUNT(*) as cnt FROM chat_messages "
+                "WHERE channel_id = ? AND created_at >= ?",
+                (channel_id, since),
+            )
+        else:
+            rows = await self.database.execute(
+                "SELECT COUNT(*) as cnt FROM chat_messages"
+                " WHERE channel_id = ?",
+                (channel_id,),
+            )
+        return int(rows[0]["cnt"]) if rows else 0
+
+    async def _get_newest_messages(
+        self,
+        channel: str,
+        limit: int,
+        since: str | None = None,
+    ) -> list[dict[str, object]]:
+        """Return the *limit* most-recent messages, newest first.
+
+        When ``since`` is given only messages at or after that timestamp
+        are considered.
+
+        Args:
+            channel: Channel name.
+            limit: Maximum number of messages to return.
+            since: Optional ISO 8601 timestamp lower bound (inclusive).
+
+        Returns:
+            List of message dicts in chronological order.
+        """
+        assert self.database is not None
+        chan_rows = await self.database.execute(
+            "SELECT id FROM chat_channels WHERE name = ?",
+            (channel,),
+        )
+        if not chan_rows:
+            return []
+        channel_id = str(chan_rows[0]["id"])
+        if since:
+            rows = await self.database.execute(
+                "SELECT id, channel_id, agent_id, parent_id, content_type,"
+                " content, created_at FROM chat_messages"
+                " WHERE channel_id = ? AND created_at >= ?"
+                " ORDER BY created_at DESC LIMIT ?",
+                (channel_id, since, limit),
+            )
+        else:
+            rows = await self.database.execute(
+                "SELECT id, channel_id, agent_id, parent_id, content_type,"
+                " content, created_at FROM chat_messages"
+                " WHERE channel_id = ?"
+                " ORDER BY created_at DESC LIMIT ?",
+                (channel_id, limit),
+            )
+        messages = [
+            {
+                "id": str(r["id"]),
+                "channel_id": str(r["channel_id"]),
+                "agent_id": str(r["agent_id"]),
+                "parent_id": r.get("parent_id"),
+                "content_type": str(r.get("content_type", "text")),
+                "content": str(r["content"]),
+                "created_at": str(r["created_at"]),
+            }
+            for r in rows
+        ]
+        messages.reverse()  # Return in chronological order
+        return messages
+
+    # ── Tool: chat_await_update ────────────────────────────────
+
+    async def _handle_await_update(
+        self,
+        channel: str,
+        nmsg: int = 1,
+        timeout: float = 120.0,  # noqa: ASYNC109
+        since: str | None = None,
+        **kwargs: object,
+    ) -> dict[str, object]:
+        """Block until *n* new messages appear in a channel or timeout.
+
+        Use this when waiting for responses or activity.  Returns the
+        messages that arrived.
+
+        Args:
+            channel: Channel name to watch.
+            nmsg: Minimum number of new messages to wait for (>= 1).
+            timeout: Seconds to wait before giving up (> 0).
+            since: Optional ISO 8601 timestamp — only count messages >= this.
+
+        Returns:
+            Dict with ``messages`` list, ``waited`` flag, and ``timed_out`` flag.
+        """
+        _ = kwargs
+        channel_name = channel
+
+        if not channel_name:
+            return {
+                "error": "VALIDATION_ERROR",
+                "message": "Channel name must not be empty",
+                "details": {},
+                "fix": "Provide a non-empty channel name (e.g. '#general').",
+            }
+        if nmsg < 1:
+            return {
+                "error": "VALIDATION_ERROR",
+                "message": "nmsg must be at least 1",
+                "details": {"nmsg": nmsg},
+                "fix": "Set nmsg to 1 or higher.",
+            }
+        if timeout <= 0:
+            return {
+                "error": "VALIDATION_ERROR",
+                "message": "timeout must be positive",
+                "details": {"timeout": timeout},
+                "fix": "Set timeout to a positive number.",
+            }
+
+        assert self.database is not None
+
+        if len(self._waiters[channel_name]) >= _MAX_WAITERS_PER_CHANNEL:
+            return {
+                "error": "RESOURCE_LIMIT",
+                "message": (
+                    f"Too many concurrent waiters on '{channel_name}'"
+                    f" (max {_MAX_WAITERS_PER_CHANNEL})"
+                ),
+                "details": {
+                    "channel": channel_name,
+                    "current_waiters": len(self._waiters[channel_name]),
+                },
+                "fix": "Retry later or reduce concurrent waiting agents.",
+            }
+
+        event = asyncio.Event()
+        self._waiters[channel_name].append(event)
+        try:
+            return await self._await_loop(channel_name, nmsg, timeout, since, event)
+        finally:
+            if event in self._waiters[channel_name]:
+                self._waiters[channel_name].remove(event)
+            if not self._waiters[channel_name]:
+                del self._waiters[channel_name]
+
+    async def _await_loop(
+        self,
+        channel_name: str,
+        nmsg: int,
+        timeout: float,  # noqa: ASYNC109
+        since: str | None,
+        event: asyncio.Event,
+    ) -> dict[str, object]:
+        """Core wait loop — polls until *nmsg* messages exist or timeout.
+
+        Args:
+            channel_name: Channel name to query.
+            nmsg: Minimum messages required.
+            timeout: Maximum seconds to wait.
+            since: Optional ISO 8601 timestamp lower bound.
+            event: The asyncio.Event to wait on.
+
+        Returns:
+            Result dict with messages/waited/timed_out.
+        """
+        # Fast path — enough messages already present
+        existing = await self._count_messages_since(channel_name, since)
+        if existing >= nmsg:
+            rows = await self._get_newest_messages(channel_name, nmsg, since)
+            return {"messages": rows, "waited": False, "timed_out": False}
+
+        # Slow path — loop until enough messages or timeout
+        start_mono = time.monotonic()
+        while True:
+            remaining = timeout - (time.monotonic() - start_mono)
+            if remaining <= 0:
+                break
+            try:
+                event.clear()
+                await asyncio.wait_for(event.wait(), timeout=remaining)
+            except TimeoutError:
+                break
+
+            try:
+                final = await self._count_messages_since(channel_name, since)
+            except apsw.CursorClosedError:
+                return {"messages": [], "waited": True, "timed_out": False}
+
+            if final >= nmsg:
+                rows = await self._get_newest_messages(channel_name, nmsg, since)
+                return {"messages": rows, "waited": True, "timed_out": False}
+
+        # Timed out — one final recheck
+        try:
+            final = await self._count_messages_since(channel_name, since)
+        except apsw.CursorClosedError:
+            return {"messages": [], "waited": True, "timed_out": True}
+
+        if final >= nmsg:
+            rows = await self._get_newest_messages(channel_name, nmsg, since)
+            return {"messages": rows, "waited": True, "timed_out": False}
+        return {"messages": [], "waited": True, "timed_out": True}
+
     # ── Tool definitions ─────────────────────────────────────────
 
     def get_tools(self) -> list[ToolDef]:
@@ -205,6 +480,15 @@ class ChatPlugin(AgoraPlugin):
                     "Summarize recent channel activity. Use this"
                     " when a channel has too many messages to read"
                     " individually."
+                ),
+            ),
+            ToolDef(
+                name="await_update",
+                handler=self._handle_await_update,
+                description=(
+                    "Block until n new messages appear in a channel"
+                    " or timeout. Use this when waiting for responses"
+                    " or activity. Returns the messages that arrived."
                 ),
             ),
         ]
@@ -306,7 +590,7 @@ class ChatPlugin(AgoraPlugin):
 
     async def _handle_read_messages(
         self, channel: str, since: str | None = None,
-        limit: int = 50, order: str = "asc",
+        limit: int = 3, order: str = "desc",
         **kwargs: object,
     ) -> dict[str, object]:
         """Read message history from a channel.
@@ -316,8 +600,8 @@ class ChatPlugin(AgoraPlugin):
         Args:
             channel: Channel name (e.g. "#general").
             since: Optional ISO 8601 timestamp — return only messages >= this time.
-            limit: Max messages to return (0-1000). 0 returns empty list.
-            order: Chronological order ("asc" or "desc").
+            limit: Max messages to return (0-1000). 0 returns empty list. Default 3.
+            order: Chronological order ("asc" or "desc"). Default "desc" (newest first).
 
         Returns:
             Dict with a ``messages`` list.

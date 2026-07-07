@@ -142,6 +142,12 @@ class RequestRouter:
 
         result = await handler(**args)
 
+        # Update heartbeat AFTER handler completes (reflects actual activity,
+        # not call start).  register is unauthenticated and does not reach
+        # this point with an agent_id, so the guard is safe.
+        if agent_id is not None:
+            await self._registry.heartbeat(agent_id)
+
         await self._eventbus.emit(
             "tool.executed",
             tool=tool_name,

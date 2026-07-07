@@ -5,6 +5,7 @@ Uses apsw.Connection(":memory:") directly — no backbone, no TTY.
 
 import apsw
 import pytest
+from textual.widgets import RichLog
 
 from admin.cli import (
     get_message_count,
@@ -284,3 +285,102 @@ def test_get_message_count(db: apsw.Connection) -> None:
 
     assert get_message_count(db, "ch1") == 3
     assert get_message_count(db, "nonexistent-id") == 0
+
+
+# ---------------------------------------------------------------------------
+# Test 7: query_messages — content field correctness
+# ---------------------------------------------------------------------------
+
+
+def test_query_messages_content(db: apsw.Connection) -> None:
+    """query_messages returns correct content field for each message."""
+    cur = db.cursor()
+
+    cur.execute(
+        "INSERT INTO chat_channels (id, name) VALUES (?, ?)",
+        ("ch1", "test-channel"),
+    )
+
+    # Insert messages with distinct content
+    msg_contents = ["first message", "second message", "third message"]
+    timestamps = [
+        "2026-01-01T08:00:00",
+        "2026-01-01T09:00:00",
+        "2026-01-01T10:00:00",
+    ]
+    for i, (content, ts) in enumerate(zip(msg_contents, timestamps, strict=True)):
+        cur.execute(
+            "INSERT INTO chat_messages "
+            "(id, channel_id, agent_id, content, created_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (f"m{i}", "ch1", "a1", content, ts),
+        )
+
+    # Fetch ascending to get predictable index order
+    msgs = query_messages(db, channel_name="test-channel", order="asc")
+    assert len(msgs) == 3
+
+    # Each message has the correct content field
+    assert msgs[0]["content"] == "first message"
+    assert msgs[1]["content"] == "second message"
+    assert msgs[2]["content"] == "third message"
+
+    # Verify other fields are present
+    assert msgs[0]["id"] == "m0"
+    assert msgs[0]["channel_name"] == "test-channel"
+    assert msgs[0]["agent_id"] == "a1"
+
+
+# ---------------------------------------------------------------------------
+# Test 8: query_messages — distinct content by index in descending order
+# ---------------------------------------------------------------------------
+
+
+def test_query_messages_distinct_content(db: apsw.Connection) -> None:
+    """Multiple messages have distinct content distinguishable by index."""
+    cur = db.cursor()
+
+    cur.execute(
+        "INSERT INTO chat_channels (id, name) VALUES (?, ?)",
+        ("ch1", "channel-a"),
+    )
+
+    msg_contents = ["alpha", "beta", "gamma", "delta"]
+    timestamps = [
+        "2026-01-01T08:00:00",
+        "2026-01-01T09:00:00",
+        "2026-01-01T10:00:00",
+        "2026-01-01T11:00:00",
+    ]
+    for i, (content, ts) in enumerate(zip(msg_contents, timestamps, strict=True)):
+        cur.execute(
+            "INSERT INTO chat_messages "
+            "(id, channel_id, agent_id, content, created_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (f"m{i}", "ch1", "a2", content, ts),
+        )
+
+    # Descending order — newest first
+    msgs = query_messages(db, channel_name="channel-a", order="desc")
+    assert len(msgs) == 4
+
+    # In desc order: delta (index 0), gamma (1), beta (2), alpha (3)
+    assert msgs[0]["content"] == "delta"
+    assert msgs[1]["content"] == "gamma"
+    assert msgs[2]["content"] == "beta"
+    assert msgs[3]["content"] == "alpha"
+
+    # Distinct by ID across all messages
+    ids = {m["id"] for m in msgs}
+    assert len(ids) == 4
+
+
+# ---------------------------------------------------------------------------
+# Test 9: RichLog auto_scroll=False behaviour
+# ---------------------------------------------------------------------------
+
+
+def test_richlog_auto_scroll_disabled() -> None:
+    """RichLog can be created with auto_scroll=False."""
+    log = RichLog(auto_scroll=False, markup=False, highlight=False)
+    assert log.auto_scroll is False

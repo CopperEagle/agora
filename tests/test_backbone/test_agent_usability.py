@@ -1,6 +1,6 @@
 """End-to-end agent usability integration test.
 
-Simulates a first-time agent connecting to Agora and using ALL 9 tools
+Simulates a first-time agent connecting to Agora and using ALL 8 tools
 entirely through ``tools/list`` schemas.  This exercises the full pipeline:
 
   MCP schema generation -> auth -> dispatch -> error handling
@@ -51,9 +51,8 @@ async def server() -> AsyncGenerator[AgoraServer, None]:
 
 # ── Helpers ─────────────────────────────────────────────────────
 
-ALL_9_TOOLS = [
+ALL_8_TOOLS = [
     "register",
-    "heartbeat",
     "list_agents",
     "get_agent",
     "get_agent_by_name",
@@ -97,8 +96,8 @@ def _assert_tool_present(
 
 
 def _assert_schemas_valid(schemas: dict[str, dict[str, Any]]) -> None:
-    """Assert all 9 tools have valid type=object schemas."""
-    for name in ALL_9_TOOLS:
+    """Assert all 8 tools have valid type=object schemas."""
+    for name in ALL_8_TOOLS:
         assert name in schemas, f"{name} missing from tools/list"
 
     for tool_name, params in schemas.items():
@@ -113,12 +112,11 @@ def _assert_schemas_valid(schemas: dict[str, dict[str, Any]]) -> None:
 
 
 async def _test_schema_introspection(server: AgoraServer) -> None:
-    """Phase 1: Inspect MCP schemas for all 9 tools."""
+    """Phase 1: Inspect MCP schemas for all 8 tools."""
     schemas = await _get_mcp_schemas(server)
     _assert_schemas_valid(schemas)
 
     _assert_tool_present(schemas, "register", required_fields=["name"])
-    _assert_tool_present(schemas, "heartbeat", required_fields=["agent_id"])
     _assert_tool_present(
         schemas, "chat_post_message",
         required_fields=["channel", "content"],
@@ -176,13 +174,7 @@ async def _test_agent_management(
     server: AgoraServer,
     agent_id: str,
 ) -> None:
-    """Phase 4: Heartbeat, list agents, get by id, get by name."""
-    hb_result = await server.call_tool(
-        "heartbeat",
-        {"agent_id": agent_id},
-    )
-    assert hb_result["ok"] is True
-
+    """Phase 4: List agents, get by id, get by name."""
     list_result = await server.call_tool("list_agents", {})
     agents: list[dict[str, Any]] = list_result["agents"]  # type: ignore[assignment]
     agent_ids = [a["id"] for a in agents]
@@ -244,14 +236,14 @@ async def _test_error_paths(server: AgoraServer) -> None:
 async def test_full_agent_lifecycle_from_tools_list_schemas(
     server: AgoraServer,
 ) -> None:
-    """Simulate a first-time agent using all 9 tools via MCP schemas.
+    """Simulate a first-time agent using all 8 tools via MCP schemas.
 
     This is ONE test that walks through the entire agent lifecycle:
 
     Phase 1 - Schema introspection (tools/list)
     Phase 2 - Agent registration
     Phase 3 - Chat: post -> read -> list channels
-    Phase 4 - Agent management: heartbeat, list, get by id/name
+    Phase 4 - Agent management: list, get by id/name
     Phase 5 - Channel summary
     Phase 6 - Error paths: NOT_AUTHORIZED, TOOL_NOT_FOUND
     """

@@ -12,6 +12,7 @@ Covers:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from collections.abc import AsyncGenerator
 from typing import cast
 from unittest.mock import MagicMock, patch
@@ -134,6 +135,7 @@ class TestPostMessage:
         # Verify message count incremented
         read_result = await server.call_tool("chat_read_messages", {
             "channel": "#general",
+            "order": "asc",
         })
         messages = _extract_messages(read_result)
         assert len(messages) == 2
@@ -168,6 +170,7 @@ class TestPostMessage:
         # Read back: verify parent_id is stored on the reply
         read_result = await server.call_tool("chat_read_messages", {
             "channel": "#general",
+            "order": "asc",
         })
         messages = _extract_messages(read_result)
         # The parent was posted first, reply second
@@ -265,6 +268,8 @@ class TestReadMessages:
         _ = channel_with_messages
         result = await server.call_tool("chat_read_messages", {
             "channel": "#test",
+            "limit": 5,
+            "order": "asc",
         })
         messages = _extract_messages(result)
         assert len(messages) == 5
@@ -302,6 +307,7 @@ class TestReadMessages:
         result = await server.call_tool("chat_read_messages", {
             "channel": "#test",
             "limit": 2,
+            "order": "asc",
         })
         messages = _extract_messages(result)
         assert len(messages) == 2
@@ -312,17 +318,17 @@ class TestReadMessages:
     async def test_read_with_default_params(
         self, server: AgoraServer, channel_with_messages: str,
     ) -> None:
-        """Reading with no params returns upto 50 messages in asc order."""
+        """Reading with no params returns upto 3 messages in desc order."""
         _ = channel_with_messages
         result = await server.call_tool("chat_read_messages", {
             "channel": "#test",
-            # No limit, order, or since passed — defaults: limit=50, order="asc"
+            # No limit, order, or since passed — defaults: limit=3, order="desc"
         })
         messages = _extract_messages(result)
-        assert len(messages) == 5  # All 5 messages within 50 limit
-        # Default order is ascending
-        assert messages[0].get("content") == "Message 0"
-        assert messages[-1].get("content") == "Message 4"
+        assert len(messages) == 3  # Default limit is 3
+        # Default order is descending (newest first)
+        assert messages[0].get("content") == "Message 4"
+        assert messages[-1].get("content") == "Message 2"
 
     async def test_read_with_order_desc(
         self, server: AgoraServer, channel_with_messages: str,
@@ -332,6 +338,7 @@ class TestReadMessages:
         result = await server.call_tool("chat_read_messages", {
             "channel": "#test",
             "order": "desc",
+            "limit": 5,
         })
         messages = _extract_messages(result)
         assert len(messages) == 5
@@ -397,6 +404,100 @@ class TestReadMessages:
         assert "created_at" in msg
         assert "content_type" in msg
         assert msg.get("content_type") == "text"
+
+    async def test_read_messages_default_limit_returns_3(
+        self, server: AgoraServer, channel_with_messages: str,
+    ) -> None:
+        """Default limit returns 3 messages in descending order."""
+        _ = channel_with_messages
+        result = await server.call_tool("chat_read_messages", {
+            "channel": "#test",
+        })
+        messages = _extract_messages(result)
+        assert len(messages) == 3
+        assert messages[0].get("content") == "Message 4"
+        assert messages[1].get("content") == "Message 3"
+        assert messages[2].get("content") == "Message 2"
+
+    async def test_read_messages_default_order_is_desc(
+        self, server: AgoraServer,
+    ) -> None:
+        """Default order returns messages newest-first."""
+        await server.call_tool("chat_post_message", {
+            "channel": "#order-test", "content": "First",
+        })
+        await server.call_tool("chat_post_message", {
+            "channel": "#order-test", "content": "Second",
+        })
+        await server.call_tool("chat_post_message", {
+            "channel": "#order-test", "content": "Third",
+        })
+        result = await server.call_tool("chat_read_messages", {
+            "channel": "#order-test",
+        })
+        messages = _extract_messages(result)
+        assert len(messages) == 3
+        assert messages[0].get("content") == "Third"
+        assert messages[1].get("content") == "Second"
+        assert messages[2].get("content") == "First"
+
+    async def test_read_messages_explicit_limit_overrides_default(
+        self, server: AgoraServer, channel_with_messages: str,
+    ) -> None:
+        """Explicit limit overrides the default limit of 3."""
+        _ = channel_with_messages
+        result = await server.call_tool("chat_read_messages", {
+            "channel": "#test",
+            "limit": 10,
+            "order": "asc",
+        })
+        messages = _extract_messages(result)
+        assert len(messages) == 5  # All 5 messages within limit=10
+
+    async def test_read_messages_explicit_order_overrides_default(
+        self, server: AgoraServer,
+    ) -> None:
+        """Explicit 'asc' order overrides the default 'desc' order."""
+        await server.call_tool("chat_post_message", {
+            "channel": "#order-override", "content": "First",
+        })
+        await server.call_tool("chat_post_message", {
+            "channel": "#order-override", "content": "Second",
+        })
+        await server.call_tool("chat_post_message", {
+            "channel": "#order-override", "content": "Third",
+        })
+        result = await server.call_tool("chat_read_messages", {
+            "channel": "#order-override",
+            "order": "asc",
+        })
+        messages = _extract_messages(result)
+        assert len(messages) == 3
+        assert messages[0].get("content") == "First"
+        assert messages[1].get("content") == "Second"
+        assert messages[2].get("content") == "Third"
+
+    async def test_read_messages_empty_channel_returns_empty(
+        self, server: AgoraServer,
+    ) -> None:
+        """Reading a non-existent channel returns an empty list."""
+        result = await server.call_tool("chat_read_messages", {
+            "channel": "#nonexistent",
+        })
+        messages = _extract_messages(result)
+        assert messages == []
+
+    async def test_read_messages_limit_0_returns_empty(
+        self, server: AgoraServer, channel_with_messages: str,
+    ) -> None:
+        """Explicit limit=0 returns an empty list."""
+        _ = channel_with_messages
+        result = await server.call_tool("chat_read_messages", {
+            "channel": "#test",
+            "limit": 0,
+        })
+        messages = _extract_messages(result)
+        assert messages == []
 
 
 # ── chat_list_channels ─────────────────────────────────────────────
@@ -813,3 +914,672 @@ class TestEdgeCases:
         assert "created_at" in msg
         assert "content_type" in msg
         assert msg.get("content_type") == "text"
+
+
+# ── chat_await_update ────────────────────────────────────────────
+
+
+async def _post_after_delay(
+    server: AgoraServer,
+    delay: float,
+    channel: str,
+    content: str,
+) -> None:
+    """Sleep then post a message — used as a background task."""
+    await asyncio.sleep(delay)
+    await server.call_tool("chat_post_message", {
+        "channel": channel,
+        "content": content,
+    })
+
+
+class TestAwaitUpdate:
+    """Tests for the chat_await_update tool."""
+
+    # ── Happy path ────────────────────────────────────────────
+
+    async def test_await_update_returns_immediately_when_messages_exist(
+        self, server: AgoraServer,
+    ) -> None:
+        """If nmsg messages already exist, return immediately."""
+        await server.call_tool("chat_post_message", {
+            "channel": "#await-fast",
+            "content": "hello",
+        })
+        result = await server.call_tool("chat_await_update", {
+            "channel": "#await-fast",
+            "nmsg": 1,
+            "timeout": 5.0,
+        })
+        assert result.get("waited") is False
+        assert result.get("timed_out") is False
+        messages = result.get("messages", [])
+        assert isinstance(messages, list)
+        assert len(messages) >= 1
+
+    async def test_await_update_blocks_until_message_posted(
+        self, server: AgoraServer,
+    ) -> None:
+        """Blocks until a message is posted, then returns it."""
+        task = asyncio.create_task(
+            server.call_tool("chat_await_update", {
+                "channel": "#await-block",
+                "nmsg": 1,
+                "timeout": 5.0,
+            }),
+        )
+        await asyncio.sleep(0.05)  # let waiter register
+        await server.call_tool("chat_post_message", {
+            "channel": "#await-block",
+            "content": "wake up",
+        })
+        result = await task
+        assert result.get("waited") is True
+        assert result.get("timed_out") is False
+        messages = result.get("messages", [])
+        assert isinstance(messages, list)
+        assert len(messages) >= 1
+        assert messages[0].get("content") == "wake up"
+
+    async def test_await_update_times_out(self, server: AgoraServer) -> None:
+        """Returns timed_out=True when no messages arrive within timeout."""
+        result = await server.call_tool("chat_await_update", {
+            "channel": "#await-timeout",
+            "nmsg": 1,
+            "timeout": 0.1,
+        })
+        assert result.get("waited") is True
+        assert result.get("timed_out") is True
+        assert result.get("messages") == []
+
+    async def test_await_update_multiple_concurrent_waits(
+        self, server: AgoraServer,
+    ) -> None:
+        """Multiple concurrent waiters all wake on a single post."""
+        tasks = [
+            asyncio.create_task(
+                server.call_tool("chat_await_update", {
+                    "channel": "#await-multi",
+                    "nmsg": 1,
+                    "timeout": 5.0,
+                }),
+            )
+            for _ in range(3)
+        ]
+        await asyncio.sleep(0.05)
+        await server.call_tool("chat_post_message", {
+            "channel": "#await-multi",
+            "content": "ping",
+        })
+        results = await asyncio.gather(*tasks)
+        for r in results:
+            assert isinstance(r, dict)
+            assert r.get("timed_out") is False
+
+    async def test_await_update_with_since_parameter(
+        self, server: AgoraServer,
+    ) -> None:
+        """Since parameter filters messages correctly."""
+        # Post initial messages
+        for i in range(3):
+            await server.call_tool("chat_post_message", {
+                "channel": "#await-since",
+                "content": f"old-{i}",
+            })
+        # Record a timestamp after the old messages
+        marker = await server.call_tool("chat_post_message", {
+            "channel": "#await-since",
+            "content": "marker",
+        })
+        since_time = str(marker.get("created_at", ""))
+        # Post a new message after the since time
+        task = asyncio.create_task(
+            server.call_tool("chat_await_update", {
+                "channel": "#await-since",
+                "nmsg": 1,
+                "timeout": 5.0,
+                "since": since_time,
+            }),
+        )
+        await asyncio.sleep(0.05)
+        await server.call_tool("chat_post_message", {
+            "channel": "#await-since",
+            "content": "new-msg",
+        })
+        result = await task
+        messages = result.get("messages", [])
+        assert isinstance(messages, list)
+        assert len(messages) >= 1
+
+    async def test_await_update_empty_channel_waits(
+        self, server: AgoraServer,
+    ) -> None:
+        """Waits on a channel with no messages (non-existent yet)."""
+        task = asyncio.create_task(
+            server.call_tool("chat_await_update", {
+                "channel": "#await-empty",
+                "nmsg": 1,
+                "timeout": 5.0,
+            }),
+        )
+        await asyncio.sleep(0.05)
+        await server.call_tool("chat_post_message", {
+            "channel": "#await-empty",
+            "content": "first",
+        })
+        result = await task
+        assert result.get("waited") is True
+        assert result.get("timed_out") is False
+
+    # ── Validation ────────────────────────────────────────────
+
+    async def test_await_update_validation_nmsg_zero(
+        self, server: AgoraServer,
+    ) -> None:
+        """nmsg=0 returns VALIDATION_ERROR."""
+        result = await server.call_tool("chat_await_update", {
+            "channel": "#test",
+            "nmsg": 0,
+        })
+        assert result.get("error") == "VALIDATION_ERROR"
+
+    async def test_await_update_validation_negative_timeout(
+        self, server: AgoraServer,
+    ) -> None:
+        """Negative timeout returns VALIDATION_ERROR."""
+        result = await server.call_tool("chat_await_update", {
+            "channel": "#test",
+            "timeout": -1.0,
+        })
+        assert result.get("error") == "VALIDATION_ERROR"
+
+    async def test_await_update_validation_empty_channel(
+        self, server: AgoraServer,
+    ) -> None:
+        """Empty channel name returns VALIDATION_ERROR."""
+        result = await server.call_tool("chat_await_update", {
+            "channel": "",
+        })
+        assert result.get("error") == "VALIDATION_ERROR"
+
+    # ── Edge cases ────────────────────────────────────────────
+
+    async def test_await_update_shutdown_wakes_waiters(self) -> None:
+        """Server shutdown wakes all blocked waiters."""
+        srv = AgoraServer(
+            config={
+                "db_path": ":memory:",
+                "plugins": [_CHAT_PLUGIN_CONFIG],
+            },
+            skip_transport=True,
+        )
+        await srv.start()
+        task = asyncio.create_task(
+            srv.call_tool("chat_await_update", {
+                "channel": "#shutdown-wait",
+                "nmsg": 1,
+                "timeout": 30.0,
+            }),
+        )
+        await asyncio.sleep(0.05)
+        await srv.stop()
+        result = await task
+        assert isinstance(result, dict)
+        # The waiter should have been woken by shutdown
+
+    async def test_await_update_returns_nmsg_messages_not_more(
+        self, server: AgoraServer,
+    ) -> None:
+        """Only returns up to nmsg messages, not more."""
+        for i in range(5):
+            await server.call_tool("chat_post_message", {
+                "channel": "#await-nmsg",
+                "content": f"msg-{i}",
+            })
+        result = await server.call_tool("chat_await_update", {
+            "channel": "#await-nmsg",
+            "nmsg": 2,
+            "timeout": 5.0,
+        })
+        messages = result.get("messages", [])
+        assert isinstance(messages, list)
+        assert len(messages) == 2
+
+    async def test_await_update_messages_are_newest(
+        self, server: AgoraServer,
+    ) -> None:
+        """Returns the newest nmsg messages when there are more."""
+        for i in range(5):
+            await server.call_tool("chat_post_message", {
+                "channel": "#await-newest",
+                "content": f"msg-{i}",
+            })
+        result = await server.call_tool("chat_await_update", {
+            "channel": "#await-newest",
+            "nmsg": 2,
+            "timeout": 5.0,
+        })
+        messages = result.get("messages", [])
+        assert isinstance(messages, list)
+        assert len(messages) == 2
+        # Should be the last two in chronological order
+        assert messages[0].get("content") == "msg-3"
+        assert messages[1].get("content") == "msg-4"
+
+    async def test_await_update_channel_not_existing(
+        self, server: AgoraServer,
+    ) -> None:
+        """Non-existent channel waits and returns empty on timeout."""
+        result = await server.call_tool("chat_await_update", {
+            "channel": "#nonexistent-channel",
+            "nmsg": 1,
+            "timeout": 0.1,
+        })
+        assert result.get("waited") is True
+        assert result.get("timed_out") is True
+        assert result.get("messages") == []
+
+    async def test_await_update_nmsg_greater_than_1(
+        self, server: AgoraServer,
+    ) -> None:
+        """Waits until nmsg=3 messages accumulate."""
+        task = asyncio.create_task(
+            server.call_tool("chat_await_update", {
+                "channel": "#await-n3",
+                "nmsg": 3,
+                "timeout": 5.0,
+            }),
+        )
+        await asyncio.sleep(0.05)
+        for i in range(3):
+            await server.call_tool("chat_post_message", {
+                "channel": "#await-n3",
+                "content": f"msg-{i}",
+            })
+        result = await task
+        messages = result.get("messages", [])
+        assert isinstance(messages, list)
+        assert len(messages) == 3
+        assert result.get("timed_out") is False
+
+    async def test_await_update_concurrent_posts_during_wait(
+        self, server: AgoraServer,
+    ) -> None:
+        """Multiple concurrent posts during wait all get collected."""
+        task = asyncio.create_task(
+            server.call_tool("chat_await_update", {
+                "channel": "#await-conc-posts",
+                "nmsg": 3,
+                "timeout": 5.0,
+            }),
+        )
+        await asyncio.sleep(0.05)
+        await asyncio.gather(
+            server.call_tool("chat_post_message", {
+                "channel": "#await-conc-posts", "content": "A",
+            }),
+            server.call_tool("chat_post_message", {
+                "channel": "#await-conc-posts", "content": "B",
+            }),
+            server.call_tool("chat_post_message", {
+                "channel": "#await-conc-posts", "content": "C",
+            }),
+        )
+        result = await task
+        messages = result.get("messages", [])
+        assert isinstance(messages, list)
+        assert len(messages) >= 3
+
+    # ── Concurrency & stress ──────────────────────────────────
+
+    async def test_await_update_rapid_fire_posts_during_wait(
+        self, server: AgoraServer,
+    ) -> None:
+        """Rapid-fire posts during wait all get collected."""
+        task = asyncio.create_task(
+            server.call_tool("chat_await_update", {
+                "channel": "#await-rapid",
+                "nmsg": 5,
+                "timeout": 5.0,
+            }),
+        )
+        await asyncio.sleep(0.05)
+        for i in range(5):
+            await server.call_tool("chat_post_message", {
+                "channel": "#await-rapid",
+                "content": f"rapid-{i}",
+            })
+        result = await task
+        messages = result.get("messages", [])
+        assert isinstance(messages, list)
+        assert len(messages) >= 5
+
+    async def test_await_update_many_concurrent_waiters_same_channel(
+        self, server: AgoraServer,
+    ) -> None:
+        """20 concurrent waiters on same channel, run 3 times."""
+        for _ in range(3):
+            tasks = [
+                asyncio.create_task(
+                    server.call_tool("chat_await_update", {
+                        "channel": "#await-stress",
+                        "nmsg": 1,
+                        "timeout": 5.0,
+                    }),
+                )
+                for _ in range(20)
+            ]
+            await asyncio.sleep(0.05)
+            await server.call_tool("chat_post_message", {
+                "channel": "#await-stress",
+                "content": "wake-all",
+            })
+            results = await asyncio.gather(*tasks)
+            for r in results:
+                assert isinstance(r, dict)
+                assert r.get("timed_out") is False
+
+    async def test_await_update_interleaved_wait_and_post(
+        self, server: AgoraServer,
+    ) -> None:
+        """Interleaved wait-then-post cycles work correctly."""
+        for cycle in range(3):
+            task = asyncio.create_task(
+                server.call_tool("chat_await_update", {
+                    "channel": "#await-interleave",
+                    "nmsg": 1,
+                    "timeout": 5.0,
+                }),
+            )
+            await asyncio.sleep(0.02)
+            await server.call_tool("chat_post_message", {
+                "channel": "#await-interleave",
+                "content": f"cycle-{cycle}",
+            })
+            result = await task
+            assert result.get("timed_out") is False
+
+    async def test_await_update_waiter_cancelled_doesnt_affect_others(
+        self, server: AgoraServer,
+    ) -> None:
+        """Cancelling one waiter doesn't break others."""
+        task_a = asyncio.create_task(
+            server.call_tool("chat_await_update", {
+                "channel": "#await-cancel",
+                "nmsg": 1,
+                "timeout": 5.0,
+            }),
+        )
+        task_b = asyncio.create_task(
+            server.call_tool("chat_await_update", {
+                "channel": "#await-cancel",
+                "nmsg": 1,
+                "timeout": 5.0,
+            }),
+        )
+        await asyncio.sleep(0.05)
+        task_a.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task_a
+        await server.call_tool("chat_post_message", {
+            "channel": "#await-cancel",
+            "content": "still-here",
+        })
+        result_b = await task_b
+        assert result_b.get("timed_out") is False
+
+    async def test_await_update_shutdown_during_active_wait(self) -> None:
+        """Shutdown during active wait wakes the waiter cleanly."""
+        srv = AgoraServer(
+            config={
+                "db_path": ":memory:",
+                "plugins": [_CHAT_PLUGIN_CONFIG],
+            },
+            skip_transport=True,
+        )
+        await srv.start()
+        task = asyncio.create_task(
+            srv.call_tool("chat_await_update", {
+                "channel": "#await-shutdown-active",
+                "nmsg": 1,
+                "timeout": 30.0,
+            }),
+        )
+        await asyncio.sleep(0.05)
+        await srv.stop()
+        result = await task
+        assert isinstance(result, dict)
+
+    async def test_await_update_concurrent_posts_from_multiple_agents(
+        self, server: AgoraServer,
+    ) -> None:
+        """Posts from multiple agents during wait are all received."""
+        task = asyncio.create_task(
+            server.call_tool("chat_await_update", {
+                "channel": "#await-multi-agent",
+                "nmsg": 3,
+                "timeout": 5.0,
+            }),
+        )
+        await asyncio.sleep(0.05)
+        await asyncio.gather(
+            server.call_tool("chat_post_message", {
+                "channel": "#await-multi-agent",
+                "content": "agent-a",
+            }),
+            server.call_tool("chat_post_message", {
+                "channel": "#await-multi-agent",
+                "content": "agent-b",
+            }),
+            server.call_tool("chat_post_message", {
+                "channel": "#await-multi-agent",
+                "content": "agent-c",
+            }),
+        )
+        result = await task
+        messages = result.get("messages", [])
+        assert isinstance(messages, list)
+        assert len(messages) >= 3
+
+    async def test_await_update_stress_loop(
+        self, server: AgoraServer,
+    ) -> None:
+        """Rapid repeated await-then-post cycles (10 iterations)."""
+        for i in range(10):
+            task = asyncio.create_task(
+                server.call_tool("chat_await_update", {
+                    "channel": f"#await-stress-{i}",
+                    "nmsg": 1,
+                    "timeout": 5.0,
+                }),
+            )
+            await asyncio.sleep(0.01)
+            await server.call_tool("chat_post_message", {
+                "channel": f"#await-stress-{i}",
+                "content": f"stress-{i}",
+            })
+            result = await task
+            assert result.get("timed_out") is False
+
+    # ── Reliability ───────────────────────────────────────────
+
+    async def test_await_update_waiter_cleanup_on_cancel(
+        self, server: AgoraServer,
+    ) -> None:
+        """Cancelled waiter is cleaned up from the registry."""
+        plugin = cast("ChatPlugin", server.plugins[0])
+        task = asyncio.create_task(
+            server.call_tool("chat_await_update", {
+                "channel": "#await-cleanup",
+                "nmsg": 1,
+                "timeout": 30.0,
+            }),
+        )
+        await asyncio.sleep(0.05)
+        assert len(plugin._waiters.get("#await-cleanup", [])) == 1  # noqa: SLF001
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+        # After cancel+finally, waiter list should be empty or cleaned
+        waiters = plugin._waiters.get("#await-cleanup", [])  # noqa: SLF001
+        assert len(waiters) == 0
+
+    async def test_await_update_db_error_during_recheck(
+        self, server: AgoraServer,
+    ) -> None:
+        """DB error during recheck after wake propagates as exception."""
+        plugin = cast("ChatPlugin", server.plugins[0])
+        original = plugin._count_messages_since  # noqa: SLF001
+
+        async def failing_count(
+            _channel: str, _since: str | None = None,
+        ) -> int:
+            msg = "DB read failed"
+            raise RuntimeError(msg) from None
+
+        plugin._count_messages_since = failing_count  # type: ignore[assignment]  # noqa: SLF001
+        task = asyncio.create_task(
+            server.call_tool("chat_await_update", {
+                "channel": "#await-dberr",
+                "nmsg": 1,
+                "timeout": 5.0,
+            }),
+        )
+        await asyncio.sleep(0.05)
+        # Post to trigger recheck
+        await server.call_tool("chat_post_message", {
+            "channel": "#await-dberr",
+            "content": "trigger",
+        })
+        with pytest.raises(RuntimeError, match="DB read failed"):
+            await task
+        plugin._count_messages_since = original  # type: ignore[assignment]  # noqa: SLF001
+
+    async def test_await_update_zero_timeout_returns_immediately(
+        self, server: AgoraServer,
+    ) -> None:
+        """timeout=0 returns VALIDATION_ERROR (must be positive)."""
+        result = await server.call_tool("chat_await_update", {
+            "channel": "#test",
+            "timeout": 0,
+        })
+        assert result.get("error") == "VALIDATION_ERROR"
+
+    async def test_await_update_since_timestamp_in_future(
+        self, server: AgoraServer,
+    ) -> None:
+        """Since timestamp in the future means zero messages — should timeout."""
+        result = await server.call_tool("chat_await_update", {
+            "channel": "#await-future",
+            "nmsg": 1,
+            "timeout": 0.1,
+            "since": "2099-01-01T00:00:00+00:00",
+        })
+        assert result.get("waited") is True
+        assert result.get("timed_out") is True
+
+    async def test_await_update_max_waiters_limit(
+        self, server: AgoraServer,
+    ) -> None:
+        """Exceeding _MAX_WAITERS_PER_CHANNEL returns RESOURCE_LIMIT."""
+        plugin = cast("ChatPlugin", server.plugins[0])
+        channel = "#await-limit"
+        # Fill up to the limit
+        for _ in range(100):
+            plugin._waiters[channel].append(asyncio.Event())  # noqa: SLF001
+        result = await server.call_tool("chat_await_update", {
+            "channel": channel,
+            "nmsg": 1,
+            "timeout": 0.1,
+        })
+        assert result.get("error") == "RESOURCE_LIMIT"
+        # Cleanup
+        plugin._waiters[channel].clear()  # noqa: SLF001
+        del plugin._waiters[channel]  # noqa: SLF001
+
+    async def test_await_update_on_shutdown_clears_all_waiters(self) -> None:
+        """on_shutdown clears the waiter registry."""
+        srv = AgoraServer(
+            config={
+                "db_path": ":memory:",
+                "plugins": [_CHAT_PLUGIN_CONFIG],
+            },
+            skip_transport=True,
+        )
+        await srv.start()
+        plugin = cast("ChatPlugin", srv.plugins[0])
+        # Manually add a waiter
+        plugin._waiters["#chan"].append(asyncio.Event())  # noqa: SLF001
+        assert len(plugin._waiters["#chan"]) == 1  # noqa: SLF001
+        await srv.stop()
+        assert len(plugin._waiters) == 0  # noqa: SLF001
+
+    async def test_await_update_eventbus_unsubscribe_on_shutdown(
+        self, server: AgoraServer,
+    ) -> None:
+        """on_shutdown unsubscribes from chat.message.posted."""
+        evt_bus = server._eventbus  # noqa: SLF001
+        assert evt_bus is not None
+        plugin = cast("ChatPlugin", server.plugins[0])
+        # Confirm subscribed
+        handlers = evt_bus._subscribers.get(  # noqa: SLF001
+            "chat.message.posted", [],
+        )
+        assert plugin._on_message_posted in handlers  # noqa: SLF001
+        await server.stop()
+        # After shutdown, handler should be removed
+        handlers_after = evt_bus._subscribers.get(  # noqa: SLF001
+            "chat.message.posted", [],
+        )
+        assert plugin._on_message_posted not in handlers_after  # noqa: SLF001
+
+    # ── EventBus lifecycle ────────────────────────────────────
+
+    async def test_await_update_subscribes_to_eventbus(
+        self, server: AgoraServer,
+    ) -> None:
+        """on_startup subscribes _on_message_posted to chat.message.posted."""
+        evt_bus = server._eventbus  # noqa: SLF001
+        assert evt_bus is not None
+        plugin = cast("ChatPlugin", server.plugins[0])
+        handlers = evt_bus._subscribers.get(  # noqa: SLF001
+            "chat.message.posted", [],
+        )
+        assert plugin._on_message_posted in handlers  # noqa: SLF001
+
+    async def test_await_update_eventbus_handler_error_isolation(
+        self, server: AgoraServer,
+    ) -> None:
+        """If one waiter's event.set() raises, others still wake."""
+        plugin = cast("ChatPlugin", server.plugins[0])
+        channel = "#await-error-iso"
+        good_event = asyncio.Event()
+        bad_event = MagicMock()
+        bad_event.set.side_effect = RuntimeError("broken event")
+
+        plugin._waiters[channel].extend([good_event, bad_event])  # noqa: SLF001
+
+        task = asyncio.create_task(
+            server.call_tool("chat_await_update", {
+                "channel": channel,
+                "nmsg": 1,
+                "timeout": 5.0,
+            }),
+        )
+        await asyncio.sleep(0.05)
+        # Manually emit the event to trigger _on_message_posted
+        evt_bus = server._eventbus  # noqa: SLF001
+        assert evt_bus is not None
+        await evt_bus.emit("chat.message.posted", channel=channel)
+
+        # The good_event should be set, bad one should log but not crash
+        assert good_event.is_set()
+        # Now post a message so the recheck finds it
+        await server.call_tool("chat_post_message", {
+            "channel": channel,
+            "content": "trigger",
+        })
+        result = await task
+        assert isinstance(result, dict)
+        # Cleanup
+        plugin._waiters.pop(channel, None)  # noqa: SLF001

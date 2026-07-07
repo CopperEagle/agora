@@ -11,6 +11,7 @@ Configuration via ``agora.config.json`` or ``AGORA_CONFIG`` env var.
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import contextlib
 import json
@@ -19,6 +20,7 @@ import os
 from pathlib import Path
 
 from agora.backbone.server import AgoraServer
+from agora.config import DEFAULT_INSTRUCTIONS
 
 logger = logging.getLogger(__name__)
 
@@ -80,12 +82,31 @@ def _setup_logging() -> None:
     )
 
 
-async def _run() -> None:
-    """Load config, create server, and run until shutdown."""
+async def _run(instructions_path: str | None = None) -> None:
+    """Load config, create server, and run until shutdown.
+
+    Args:
+        instructions_path: Optional path to a file containing MCP server
+            instructions. If ``None`` or the file does not exist, the
+            built-in default instructions are used.
+
+    """
     _setup_logging()
     config = _find_config()
 
-    server = AgoraServer(config)
+    # Load instructions
+    instructions = DEFAULT_INSTRUCTIONS
+    if instructions_path:
+        path = Path(instructions_path)
+        if await asyncio.to_thread(path.exists):
+            instructions = await asyncio.to_thread(path.read_text)
+        else:
+            logger.warning(
+                "Instructions file %s not found, using default",
+                instructions_path,
+            )
+
+    server = AgoraServer(config, instructions=instructions)
     db_path = config.get("db_path", "agora.db")
     plugins = config.get("plugins", [])
     plugin_count = len(plugins) if isinstance(plugins, list) else 0
@@ -101,8 +122,17 @@ async def _run() -> None:
 
 def main() -> None:
     """Entry point for ``python -m agora``."""
+    parser = argparse.ArgumentParser(description="Agora MCP coordination server")
+    parser.add_argument(
+        "--instructions",
+        type=str,
+        default=None,
+        help="Path to a file containing MCP server instructions",
+    )
+    args = parser.parse_args()
+
     with contextlib.suppress(KeyboardInterrupt):
-        asyncio.run(_run())
+        asyncio.run(_run(instructions_path=args.instructions))
 
 
 if __name__ == "__main__":

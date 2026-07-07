@@ -1,9 +1,9 @@
 """Tests for backbone handler typed parameters and schema generation.
 
-Verifies that the 5 backbone handlers (_handle_register, _handle_heartbeat,
-_handle_list_agents, _handle_get_agent, _handle_get_agent_by_name) have
-correct typed signatures, generate valid FastMCP schemas, and behave correctly
-with optional params and missing data.
+Verifies that the 4 backbone handlers (_handle_register, _handle_list_agents,
+_handle_get_agent, _handle_get_agent_by_name) have correct typed signatures,
+generate valid FastMCP schemas, and behave correctly with optional params
+and missing data.
 """
 
 from __future__ import annotations
@@ -62,17 +62,6 @@ async def test_handle_register_signature() -> None:
     # self and **kwargs still present
     assert "self" in params
     assert "kwargs" in params
-
-
-async def test_handle_heartbeat_signature() -> None:
-    """Given the _handle_heartbeat method, When inspecting its signature,
-    Then it has agent_id param."""
-    sig = inspect.signature(AgoraServer._handle_heartbeat)
-    params = sig.parameters
-
-    assert "agent_id" in params
-    assert params["agent_id"].annotation == "str"
-    assert params["agent_id"].default is inspect.Parameter.empty
 
 
 async def test_handle_list_agents_signature() -> None:
@@ -148,29 +137,6 @@ async def test_handle_register_schema() -> None:
     assert "name" in required
 
 
-async def test_handle_heartbeat_schema() -> None:
-    """Given the heartbeat handler, When creating a FastMCP Tool,
-    Then the schema has agent_id string param."""
-    from fastmcp.tools.base import Tool
-
-    mock_instance = AsyncMock(spec=AgoraServer)
-    mock_instance._registry = AsyncMock()
-    bound_handler = AgoraServer._handle_heartbeat.__get__(
-        mock_instance, AgoraServer,
-    )
-
-    router = AsyncMock()
-    router.route = AsyncMock(return_value={"ok": True})
-    wrapper = _make_typed_wrapper(router, "heartbeat", bound_handler)
-    mcp_tool = Tool.from_function(wrapper, name="heartbeat")
-
-    params: dict[str, Any] = mcp_tool.parameters  # type: ignore[assignment]
-    props: dict[str, Any] = params["properties"]  # type: ignore[assignment]
-
-    assert "agent_id" in props
-    assert props["agent_id"]["type"] == "string"
-
-
 async def test_handle_list_agents_schema() -> None:
     """Given the list_agents handler, When creating a FastMCP Tool,
     Then the schema has role and name_prefix properties."""
@@ -220,17 +186,15 @@ async def test_handle_register_with_role_none(server: AgoraServer) -> None:
 
 
 async def test_handlers_receive_agent_id_via_kwargs(server: AgoraServer) -> None:
-    """Given a registered agent, When calling heartbeat with _agent_id in kwargs,
+    """Given a registered agent, When calling list_agents with _agent_id in kwargs,
     Then the handler accepts it via **kwargs."""
     reg = await server.call_tool("register", {"name": "kw-agent"})
     agent_id = str(reg["agent_id"])
-    # _agent_id is injected by middleware, but call_tool bypasses it;
-    # the handler still accepts it via **kwargs
     result = await server.call_tool(
-        "heartbeat",
-        {"agent_id": agent_id, "_agent_id": agent_id},
+        "list_agents",
+        {"_agent_id": agent_id},
     )
-    assert result["ok"] is True
+    assert "agents" in result
 
 
 async def test_get_agent_with_missing_id_returns_none(server: AgoraServer) -> None:

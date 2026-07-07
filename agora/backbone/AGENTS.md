@@ -110,17 +110,18 @@ These tools are registered on the router automatically — no plugin needed:
 | Tool | Parameters | Returns |
 |------|-----------|---------|
 | `register` | `name: str`, `role?: str`, `capabilities?: list[str]`, `manifest?: dict` | `{"agent_id": "..."}` |
-| `heartbeat` | `agent_id: str` | `{"ok": true}` |
 | `list_agents` | *(none)* | `{"agents": [...]}` |
 | `get_agent` | `agent_id: str` | `{"agent": {...} \| None}` |
 | `get_agent_by_name` | `name: str` | `{"agent": {...} \| None}` |
 
 `register` is the only unauthenticated tool — all others require a registered `_agent_id` (extracted from arguments by `AuthMiddleware`).
 
+Heartbeat is now **implicit**: every authenticated tool call updates the agent's `last_heartbeat_at` timestamp automatically after the handler completes. No explicit heartbeat tool is needed. The lifecycle manager uses these timestamps to detect stale agents and mark them offline.
+
 ## Constraints (Never Violate)
 
 1. **Backbone never calls an LLM.** Plugins may, but the backbone owns transport, identity, routing, and lifecycle.
-2. **Every tool call is authenticated.** The router rejects unregistered agents before reaching any plugin.
+2. **Every tool call is authenticated.** The router rejects unregistered agents before reaching any plugin. Every authenticated call also serves as an implicit heartbeat — `last_heartbeat_at` is updated automatically after the handler completes, so agents don't need to call a separate heartbeat tool.
 3. **Plugins own their tables.** Never read another plugin's tables directly — use the event bus.
 4. **Tool names are prefixed** per plugin namespace (e.g., `chat_post_message`).
 5. **No raw SQL** in tool handlers — always use prepared statements.

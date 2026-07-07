@@ -83,26 +83,12 @@ async def test_register_schema(server: AgoraServer) -> None:
     assert "name" in required
 
 
-async def test_heartbeat_schema(server: AgoraServer) -> None:
-    """heartbeat must have agent_id as required string."""
-    tools = await _get_tools_by_name(server)
-    params = tools["heartbeat"]
-
-    props: dict[str, Any] = params["properties"]
-    required: list[str] = params["required"]
-
-    assert "agent_id" in props
-    assert props["agent_id"]["type"] == "string"
-    assert "agent_id" in required
-
-
 async def test_all_tools_have_object_schema_with_properties(
     server: AgoraServer,
 ) -> None:
-    """All 9 tools must have inputSchema with type=object and non-empty properties."""
+    """All 8 tools must have inputSchema with type=object and non-empty properties."""
     expected_tools = [
         "register",
-        "heartbeat",
         "list_agents",
         "get_agent",
         "get_agent_by_name",
@@ -139,16 +125,3 @@ async def test_no_tool_has_bare_object_schema(server: AgoraServer) -> None:
             assert name == "list_agents", (
                 f"{name} has bare schema without properties (old broken pattern)"
             )
-
-
-async def test_register_then_heartbeat_end_to_end(server: AgoraServer) -> None:
-    """Calling register → heartbeat via call_tool must succeed end-to-end."""
-    reg_result = await server.call_tool("register", {"name": "e2e-agent"})
-    agent_id: str = str(reg_result["agent_id"])
-    assert len(agent_id) == 36  # UUID
-
-    hb_result = await server.call_tool(
-        "heartbeat",
-        {"agent_id": agent_id},
-    )
-    assert hb_result["ok"] is True

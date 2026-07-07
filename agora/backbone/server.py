@@ -140,6 +140,7 @@ class AgoraServer:
 
     def __init__(
         self, config: dict[str, object], skip_transport: bool = False,
+        instructions: str | None = None,
     ) -> None:
         """Initialize the server with a config dict.
 
@@ -148,9 +149,12 @@ class AgoraServer:
 
             skip_transport: When True, do not start stdio transport.
 
+            instructions: Optional MCP instructions string passed to FastMCP.
+
         """
         self._config: dict[str, object] = config
         self._skip_transport = skip_transport
+        self._instructions = instructions
 
         self._database: Database | None = None
         self._eventbus: EventBus | None = None
@@ -184,6 +188,11 @@ class AgoraServer:
     def plugins(self) -> list[AgoraPlugin]:
         """Return the list of loaded plugins."""
         return list(self._plugins)
+
+    @property
+    def instructions(self) -> str | None:
+        """Return the MCP instructions string (None if not set)."""
+        return self._instructions
 
     async def start(self) -> None:
         """Start the server: create components, load plugins, register tools.
@@ -244,7 +253,7 @@ class AgoraServer:
                 )
 
         # 8. Create FastMCP server with AuthMiddleware
-        self._mcp = FastMCP[None]("agora")
+        self._mcp = FastMCP[None]("agora", instructions=self._instructions)
         self._mcp.add_middleware(AuthMiddleware(self._router))
 
         # 9. Register all router tools with FastMCP
@@ -312,14 +321,6 @@ class AgoraServer:
                 "Register as an agent with the Agora. Call this"
                 " first — all other tools require a registered"
                 " agent_id."
-            ),
-        )
-        self._router.register_tool(
-            "heartbeat",
-            self._handle_heartbeat,
-            description=(
-                "Refresh your liveness timestamp. Call this every"
-                " 5 minutes to stay online."
             ),
         )
         self._router.register_tool(
@@ -404,22 +405,6 @@ class AgoraServer:
             manifest=manifest,
         )
         return {"agent_id": agent_id}
-
-    async def _handle_heartbeat(  # noqa: D417
-        self, agent_id: str, **kwargs: object,  # noqa: ARG002
-    ) -> dict[str, object]:
-        """Refresh your liveness timestamp. Call this every 5 minutes to stay online.
-
-        Args:
-            agent_id: Your own agent UUID obtained from register().
-
-        Returns:
-            Dict containing ``ok: True``.
-
-        """
-        assert self._registry is not None
-        await self._registry.heartbeat(agent_id)
-        return {"ok": True}
 
     async def _handle_list_agents(  # noqa: D417
         self,

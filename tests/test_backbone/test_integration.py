@@ -143,15 +143,6 @@ async def test_agent_reregistration(empty_server: AgoraServer) -> None:
     assert agent_data["role"] == "reviewer"
 
 
-async def test_heartbeat_flow(empty_server: AgoraServer) -> None:
-    """Register → heartbeat → verify no error."""
-    result = await empty_server.call_tool("register", {"name": "heartbeat-agent"})
-    agent_id = str(result["agent_id"])
-
-    hb = await empty_server.call_tool("heartbeat", {"agent_id": agent_id})
-    assert hb["ok"] is True
-
-
 async def test_tool_call_audit_events(empty_server: AgoraServer) -> None:
     """Subscribe to tool.executed on EventBus, call a tool via router, verify event."""
     received_events: list[dict[str, object]] = []

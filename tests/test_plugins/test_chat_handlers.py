@@ -96,15 +96,15 @@ class TestReadMessagesSignature:
         sig = inspect.signature(ChatPlugin._handle_read_messages)
         assert sig.parameters["channel"].default is inspect.Parameter.empty
 
-    def test_limit_defaults_to_50(self) -> None:
-        """limit defaults to 50."""
+    def test_limit_defaults_to_3(self) -> None:
+        """limit defaults to 3."""
         sig = inspect.signature(ChatPlugin._handle_read_messages)
-        assert sig.parameters["limit"].default == 50
+        assert sig.parameters["limit"].default == 3
 
-    def test_order_defaults_to_asc(self) -> None:
-        """order defaults to 'asc'."""
+    def test_order_defaults_to_desc(self) -> None:
+        """order defaults to 'desc'."""
         sig = inspect.signature(ChatPlugin._handle_read_messages)
-        assert sig.parameters["order"].default == "asc"
+        assert sig.parameters["order"].default == "desc"
 
     def test_since_defaults_to_none(self) -> None:
         """since defaults to None."""

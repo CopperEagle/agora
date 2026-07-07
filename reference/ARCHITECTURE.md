@@ -82,22 +82,20 @@ The registry is part of the backbone because identity must be established **befo
 - `capabilities` (array of strings, e.g. `["code:review", "web:search"]`)
 - `manifest` (free-form JSON for agent-specific metadata)
 - `status` ("online" | "idle" | "busy" | "offline")
-- `session_id` (current session, regenerated on reconnect)
-- `connected_at`, `last_heartbeat_at`
+- `connected_at`, `last_heartbeat_at` (updated automatically on every authenticated API call)
 - `token_budget` (optional cap per session)
 
 **Lifecycle:**
 1. Agent connects → MCP session starts
 2. Agent calls `register(name, role?, capabilities?, manifest?)`
 3. Backbone creates agent record, returns `agent_id`
-4. Agent calls `heartbeat()` every N minutes (default 5)
+4. Agent's online status is maintained automatically — every authenticated API call updates `last_heartbeat_at`
 5. Agent calls `set_status(status)` and `set_current_task(task)` as it works
-6. On disconnect or 3 missed heartbeats → status = "offline"
+6. On disconnect or missed heartbeats → status = "offline"
 7. Agent can register again with same name → gets same `agent_id` (if within TTL) or new one
 
 **Backbone tools (always available, no plugin needed):**
 - `register(name, role?, capabilities?, manifest?)` → agent_id
-- `heartbeat()` → refreshes session
 - `set_status(status, task?)` → updates agent state
 - `list_agents(filter?)` → agents matching filter
 - `find_agents(capability)` → agents with a specific capability
@@ -122,7 +120,7 @@ Tracks sessions, enforces token budgets, handles disconnection:
 - **Session tracking**: Every connection gets a session_id. Tool calls are tagged with it.
 - **Token budget enforcement**: If an agent has a budget cap, the lifecycle manager tracks cumulative usage and rejects calls when exceeded (gracefully: "You've used 48K of 50K budget").
 - **Graceful shutdown**: On server shutdown, all plugins get `on_shutdown` hook.
-- **Heartbeat monitoring**: Periodic check for stale agents; moves them to "offline".
+- **Activity tracking**: Every authenticated tool call updates the agent's `last_heartbeat_at` timestamp automatically (after the handler completes). No explicit heartbeat tool is needed.
 
 ### Config Store
 
@@ -218,7 +216,7 @@ This prevents circular dependencies: Log plugin listens to `message.posted` from
 ### Chat Plugin
 
 **Namespace:** `chat_` prefix on tool names
-**Tools:** `chat_post_message`, `chat_read_messages`, `chat_list_channels`, `chat_summarize_channel`
+**Tools:** `chat_post_message`, `chat_read_messages`, `chat_list_channels`, `chat_summarize_channel`, `chat_await_update`
 **Tables:** `chat_channels`, `chat_messages`
 **Events emitted:** `chat.message.posted`, `chat.channel.created`
 **Events consumed:** (none)

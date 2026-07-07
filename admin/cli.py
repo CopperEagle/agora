@@ -14,7 +14,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.events import Key
-from textual.widgets import DataTable, Input, Label, Static, Tree
+from textual.widgets import DataTable, Input, Label, RichLog, Static, Tree
 
 logger = logging.getLogger(__name__)
 
@@ -292,18 +292,27 @@ class AgoraAdmin(App):
     }
     #message-detail {
         height: 1fr;
-        min-height: 10;
+        min-height: 15;
         border: solid $primary;
         padding: 1 2;
         background: $surface;
+        overflow-y: auto;
+        overflow-x: hidden;
     }
     #footer-bar {
         height: 3;
         dock: bottom;
         background: $surface;
     }
+    #help-label {
+        width: auto;
+        min-width: 40;
+        padding: 0 1;
+        color: $text-muted;
+    }
     #status-label {
-        width: 1fr;
+        width: auto;
+        min-width: 20;
         padding: 0 1;
     }
     #filter-input {
@@ -336,6 +345,7 @@ class AgoraAdmin(App):
         self._current_view: str = "agents"
         self._current_channel: str | None = None
         self._current_messages: list[dict[str, object]] = []
+        self._all_table_rows: list[tuple[object, list[str]]] = []
 
     def compose(self) -> ComposeResult:
         """Build the UI layout.
@@ -347,9 +357,12 @@ class AgoraAdmin(App):
         with Horizontal(id="nav-pane"):
             yield Tree("Agora Admin", id="nav-tree")
         with Vertical(id="detail-pane"):
-            yield DataTable(id="detail-table")
-            yield Static("", id="message-detail")
+            yield DataTable(id="detail-table", cursor_type="row")
+            yield RichLog(
+                id="message-detail", markup=False, highlight=False, wrap=True, auto_scroll=False,
+            )
         with Horizontal(id="footer-bar"):
+            yield Label("←→ panels  ↑↓ scroll  Tab cycle  / filter  q quit", id="help-label")
             yield Label("", id="status-label")
             yield Input(placeholder="Filter...", id="filter-input")
 
@@ -427,9 +440,14 @@ class AgoraAdmin(App):
                 str(agent.get("last_heartbeat_at", "-")),
                 str(agent.get("registered_at", "-")),
             )
-        self.query_one("#message-detail", Static).update(
-            "Select a message to view details",
-        )
+        self._all_table_rows = [
+            (row_key, list(table.get_row(row_key)))
+            for row_key in table.rows
+        ]
+        detail = self.query_one("#message-detail", RichLog)
+        detail.clear()
+        detail.write("Select a message to view details")
+        detail.scroll_home(animate=False)
         self._update_status()
 
     def _show_channels_view(self) -> None:
@@ -446,9 +464,14 @@ class AgoraAdmin(App):
                 str(ch.get("last_activity_at", "-")),
                 str(ch.get("created_at", "-")),
             )
-        self.query_one("#message-detail", Static).update(
-            "Select a message to view details",
-        )
+        self._all_table_rows = [
+            (row_key, list(table.get_row(row_key)))
+            for row_key in table.rows
+        ]
+        detail = self.query_one("#message-detail", RichLog)
+        detail.clear()
+        detail.write("Select a message to view details")
+        detail.scroll_home(animate=False)
         self._update_status()
 
     def _show_channel_messages(self, channel_name: str) -> None:
@@ -472,6 +495,7 @@ class AgoraAdmin(App):
         if isinstance(result, dict) and "error" in result:
             self._current_messages = []
             table.add_row("-", "-", result.get("message", "Error"))
+            self._all_table_rows = []
         else:
             self._current_messages = result  # type: ignore[assignment]
             for msg in result:  # type: ignore[union-attr]
@@ -480,14 +504,19 @@ class AgoraAdmin(App):
                     str(msg.get("agent_id", "-")),
                     str(msg.get("content", "-")),
                 )
+            self._all_table_rows = [
+                (row_key, list(table.get_row(row_key)))
+                for row_key in table.rows
+            ]
+        detail = self.query_one("#message-detail", RichLog)
+        detail.clear()
         if self._current_messages:
             first_msg = self._current_messages[0]
             content = str(first_msg.get("content", "-"))
-            self.query_one("#message-detail", Static).update(content)
+            detail.write(content)
         else:
-            self.query_one("#message-detail", Static).update(
-                "Select a message to view details",
-            )
+            detail.write("Select a message to view details")
+        detail.scroll_home(animate=False)
         self._update_status()
 
     def _update_status(self) -> None:
@@ -560,8 +589,10 @@ class AgoraAdmin(App):
         if 0 <= row_index < len(self._current_messages):
             msg = self._current_messages[row_index]
             content = str(msg.get("content", "-"))
-            detail = self.query_one("#message-detail", Static)
-            detail.update(content)
+            detail = self.query_one("#message-detail", RichLog)
+            detail.clear()
+            detail.write(content)
+            detail.scroll_home(animate=False)
 
     # -- Keybindings ---------------------------------------------------------
 
@@ -574,9 +605,9 @@ class AgoraAdmin(App):
         filter_input = self.query_one("#filter-input", Input)
         filter_input.value = ""
         table = self.query_one("#detail-table", DataTable)
-        for row_key in table.rows:
-            table.set_row_display(row_key, display=True)
-        # Return focus to the tree
+        table.clear()
+        for _row_key, row_data in self._all_table_rows:
+            table.add_row(*row_data)
         self.query_one("#nav-tree", Tree).focus()
 
     def action_refresh(self) -> None:
@@ -595,7 +626,7 @@ class AgoraAdmin(App):
 
     def _panel_order(self) -> list[str]:
         """Return ordered list of focusable panel IDs."""
-        return ["nav-tree", "detail-table"]
+        return ["nav-tree", "detail-table", "message-detail", "filter-input"]
 
     def action_focus_next_panel(self) -> None:
         """Cycle focus to next panel (Tab)."""
@@ -642,8 +673,8 @@ class AgoraAdmin(App):
     def on_key(self, event: Key) -> None:
         """Intercept left/right arrows before widgets capture them.
 
-        Left arrow: switch focus from DataTable → Tree (only when DataTable focused)
-        Right arrow: switch focus from Tree → DataTable (only when Tree focused)
+        Left arrow: DataTable → Tree, MessageDetail → DataTable
+        Right arrow: Tree → DataTable, DataTable → MessageDetail
 
         """
         if event.key == "left":
@@ -651,11 +682,17 @@ class AgoraAdmin(App):
             if focused is not None and focused.id == "detail-table":
                 event.prevent_default()
                 self.query_one("#nav-tree", Tree).focus()
+            elif focused is not None and focused.id == "message-detail":
+                event.prevent_default()
+                self.query_one("#detail-table", DataTable).focus()
         elif event.key == "right":
             focused = self.focused
             if focused is not None and focused.id == "nav-tree":
                 event.prevent_default()
                 self.query_one("#detail-table", DataTable).focus()
+            elif focused is not None and focused.id == "detail-table":
+                event.prevent_default()
+                self.query_one("#message-detail", RichLog).focus()
 
     # -- Client-side filtering -----------------------------------------------
 
@@ -670,12 +707,13 @@ class AgoraAdmin(App):
             return
         query = event.value.lower()
         table = self.query_one("#detail-table", DataTable)
-        for row_key in table.rows:
-            row_data = table.get_row(row_key)
+        table.clear()
+        for _row_key, row_data in self._all_table_rows:
             match = not query or any(
                 query in str(cell).lower() for cell in row_data
             )
-            table.set_row_display(row_key, display=match)
+            if match:
+                table.add_row(*row_data)
 
 
 # ---------------------------------------------------------------------------

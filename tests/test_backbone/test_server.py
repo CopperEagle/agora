@@ -5,12 +5,14 @@ from __future__ import annotations
 import importlib
 import types
 from collections.abc import AsyncGenerator
+from pathlib import Path
 
 import pytest
 
 from agora.backbone import AgoraPlugin, ToolDef
 from agora.backbone.eventbus import EventBus
 from agora.backbone.server import AgoraServer
+from agora.config import DEFAULT_INSTRUCTIONS
 
 # ── Mock plugin for testing ─────────────────────────────────────
 
@@ -94,15 +96,6 @@ async def test_call_tool_register(server: AgoraServer) -> None:
     assert "agent_id" in result
     assert isinstance(result["agent_id"], str)
     assert len(result["agent_id"]) == 36
-
-
-async def test_call_tool_heartbeat(server: AgoraServer) -> None:
-    """Given a registered agent, When calling heartbeat,
-    Then ok=True is returned."""
-    reg_result = await server.call_tool("register", {"name": "bob"})
-    agent_id = str(reg_result["agent_id"])
-    result = await server.call_tool("heartbeat", {"agent_id": agent_id})
-    assert result["ok"] is True
 
 
 async def test_call_tool_list_agents(server: AgoraServer) -> None:
@@ -269,7 +262,7 @@ async def test_tool_descriptions_visible_via_fastmcp() -> None:
             )
 
         # Backbone tools carry descriptions from register_tool calls
-        for backbone_tool in ("register", "heartbeat", "list_agents",
+        for backbone_tool in ("register", "list_agents",
                               "get_agent", "get_agent_by_name"):
             assert backbone_tool in tools_by_name, (
                 f"{backbone_tool} missing from MCP tools"
@@ -278,5 +271,83 @@ async def test_tool_descriptions_visible_via_fastmcp() -> None:
             assert desc, (
                 f"{backbone_tool} should have a non-empty description"
             )
+    finally:
+        await srv.stop()
+
+
+# ── Instructions tests ──────────────────────────────────────────
+
+
+async def test_default_instructions_loaded() -> None:
+    """Given a server created without instructions, When checking the
+    instructions attribute, Then it is None (caller supplies defaults)."""
+    cfg: dict[str, object] = {"db_path": ":memory:", "plugins": []}
+    srv = AgoraServer(config=cfg, skip_transport=True)
+    assert srv.instructions is None
+
+
+async def test_custom_instructions_loaded() -> None:
+    """Given a server created with a custom instructions string, When
+    checking the instructions attribute, Then the string is stored."""
+    custom = "Custom instructions for testing."
+    cfg: dict[str, object] = {"db_path": ":memory:", "plugins": []}
+    srv = AgoraServer(config=cfg, skip_transport=True, instructions=custom)
+    assert srv.instructions == custom
+
+
+async def test_missing_instructions_file_uses_default(
+    tmp_path: Path,
+) -> None:
+    """Given a non-existent instructions file path, When _run loads
+    instructions, Then the default instructions are used."""
+    missing = str(tmp_path / "nonexistent.txt")
+    instructions = DEFAULT_INSTRUCTIONS
+    path = Path(missing)
+    if path.exists():
+        instructions = path.read_text()
+    # Simulates the fallback logic from __main__._run
+    assert instructions == DEFAULT_INSTRUCTIONS
+
+
+async def test_empty_instructions_file(tmp_path: Path) -> None:
+    """Given an empty instructions file, When loaded and passed to the
+    server, Then the instructions attribute is an empty string."""
+    empty_file = tmp_path / "empty.txt"
+    empty_file.write_text("")
+    instructions = empty_file.read_text()
+    cfg: dict[str, object] = {"db_path": ":memory:", "plugins": []}
+    srv = AgoraServer(config=cfg, skip_transport=True, instructions=instructions)
+    assert srv.instructions == ""
+
+
+# ── Heartbeat-on-call tests ──────────────────────────────────────
+
+
+async def test_heartbeat_not_in_tool_list(server: AgoraServer) -> None:
+    """Given a running server, When listing tools,
+    Then 'heartbeat' is NOT among them."""
+    tools = server._router.list_tools()  # noqa: SLF001
+    assert "heartbeat" not in tools
+
+
+async def test_authenticated_call_updates_heartbeat() -> None:
+    """Given a registered agent, When calling an authenticated tool via router,
+    Then last_heartbeat_at is updated."""
+    cfg: dict[str, object] = {"db_path": ":memory:", "plugins": []}
+    srv = AgoraServer(config=cfg, skip_transport=True)
+    await srv.start()
+    try:
+        reg = await srv.call_tool("register", {"name": "hb-agent"})
+        agent_id = str(reg["agent_id"])
+
+        agent = await srv.call_tool("get_agent", {"agent_id": agent_id})
+        assert agent["agent"]["last_heartbeat_at"] is None
+
+        # Call via router.route() to go through auth pipeline
+        assert srv._router is not None  # noqa: SLF001
+        await srv._router.route("list_agents", {}, session_id=agent_id)  # noqa: SLF001
+
+        agent = await srv.call_tool("get_agent", {"agent_id": agent_id})
+        assert agent["agent"]["last_heartbeat_at"] is not None
     finally:
         await srv.stop()

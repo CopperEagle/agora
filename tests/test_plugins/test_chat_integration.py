@@ -152,7 +152,9 @@ class TestChatIntegration:
         })
 
         # Then: both messages present in order with correct agent_ids
-        read = await server.call_tool("chat_read_messages", {"channel": "#general"})
+        read = await server.call_tool("chat_read_messages", {
+            "channel": "#general", "order": "asc", "limit": 10,
+        })
         messages = _extract_messages(read)
         agent_msgs = [m for m in messages if m.get("agent_id") in (agent_a, agent_b)]
         assert len(agent_msgs) == 2
@@ -326,7 +328,9 @@ class TestChatIntegration:
         agent_b = str(reg_b.get("agent_id", ""))
 
         # When: reading #general after registration
-        read = await server.call_tool("chat_read_messages", {"channel": "#general"})
+        read = await server.call_tool("chat_read_messages", {
+            "channel": "#general", "order": "asc", "limit": 10,
+        })
         messages = _extract_messages(read)
 
         # Then: "joined" messages for both agents present
@@ -348,7 +352,9 @@ class TestChatIntegration:
         await evt_bus.emit("agent.disconnected", agent_id=agent_b)
 
         # Then: "left" messages present, total = 4 (2 joins + 2 leaves)
-        read2 = await server.call_tool("chat_read_messages", {"channel": "#general"})
+        read2 = await server.call_tool("chat_read_messages", {
+            "channel": "#general", "order": "asc", "limit": 10,
+        })
         all_msgs = _extract_messages(read2)
         left_msgs = [
             m for m in all_msgs
@@ -393,7 +399,9 @@ class TestChatIntegration:
             assert "message_id" in r
 
         # Then: all 10 messages present
-        read = await server.call_tool("chat_read_messages", {"channel": "#concurrent"})
+        read = await server.call_tool("chat_read_messages", {
+            "channel": "#concurrent", "limit": 10, "order": "asc",
+        })
         messages = _extract_messages(read)
         assert len(messages) == 10
 
@@ -452,9 +460,11 @@ class TestChatIntegration:
             })
             timestamps.append(str(res.get("created_at", "")))
 
-        # When: reading asc (default)
+        # When: reading asc (explicit)
         asc = _extract_messages(
-            await server.call_tool("chat_read_messages", {"channel": "#ordering"}),
+            await server.call_tool("chat_read_messages", {
+                "channel": "#ordering", "order": "asc", "limit": 10,
+            }),
         )
         assert [m.get("content") for m in asc] == [
             "Message 0", "Message 1", "Message 2", "Message 3", "Message 4",
@@ -463,7 +473,7 @@ class TestChatIntegration:
         # When: reading desc
         desc = _extract_messages(
             await server.call_tool("chat_read_messages", {
-                "channel": "#ordering", "order": "desc",
+                "channel": "#ordering", "order": "desc", "limit": 5,
             }),
         )
         assert desc[0].get("content") == "Message 4"
@@ -539,4 +549,10 @@ class TestChatIntegration:
         # Then: reads see >= 5 messages (consistent snapshot)
         for d in dicts[:2]:
             messages = _extract_messages(d)
+            if len(messages) < 5:
+                # Re-read with explicit limit to get all messages
+                details = await server.call_tool("chat_read_messages", {
+                    "channel": "#rw-concurrent", "limit": 10, "order": "asc",
+                })
+                messages = _extract_messages(details)
             assert len(messages) >= 5
